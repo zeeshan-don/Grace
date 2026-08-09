@@ -1,0 +1,243 @@
+# ZEESH AI API (Milestones 10–12)
+
+The cloud backend foundation for accounts, usage tracking, model routing and
+the ad-supported free business model.
+
+```
+LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI providers
+```
+
+The local CLI keeps working offline with its own local Groq key; once the user
+runs `myagent login`, the CLI also authenticates to this API and reports usage
+(and can proxy model calls through it). **Deployment is documented and ready**
+(see `docs/deployment.md`) but has not been performed yet — no credentials are
+available in this environment.
+
+## Architecture
+
+- `src/api/` — the API implementation (shared by local + serverless).
+  - `handlers.ts` — route handlers using Vercel's Node `(req, res)` signature.
+  - `auth.ts` — **session guard**: resolves `Authorization: Bearer <token>`
+    against the `sessions` table and returns the user.
+  - `authService.ts` — register / login / logout / authenticate. Passwords are
+    scrypt-hashed (`password.ts`); sessions store only the SHA-256 of the token
+    (`sessions.ts`).
+  - `rateLimit.ts` — sliding-window rate limiter (auth + API scopes; fails
+    safe: invalid env config falls back to sane defaults).
+  - `providers.ts` — server-side provider layer (`GROQ_API_KEY` never leaves
+    the server; provider failures return a generic message to clients).
+  - `middleware.ts` — `withHttp`: CORS + preflight, secret-safe 500s and
+    request logging, applied on Vercel (`api/*.ts`) and locally (`router.ts`).
+  - `beta.ts` — closed-beta gate (`ZEESH_BETA_MODE` / `ZEESH_BETA_ALLOWLIST`).
+  - `log.ts` — safe request logging (secrets scrubbed before output).
+  - `db.ts` — Neon PostgreSQL client (`DATABASE_URL`), created lazily.
+  - `usage.ts` — usage-recording service (`agent_runs` + `usage` rows).
+  - `router.ts` + `server.ts` — local dev server over `node:http`.
+- `api/*.ts` and `api/auth/*.ts` — thin Vercel zero-config serverless functions
+  exporting the same handlers.
+
+## Endpoints
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| GET | `/api/health` | none | Liveness + configuration probe |
+| POST | `/api/auth/register` | none (rate-limited) | Create account → session token (`403` when the closed beta gate is on and the email is not allowlisted) |
+| POST | `/api/auth/login` | none (rate-limited) | Verify credentials → session token |
+| POST | `/api/auth/logout` | Session | Invalidate the session |
+| GET | `/api/auth/me` | Session | Current user (whoami) |
+| POST | `/api/usage` | Session | Record one agent run + token usage |
+| GET | `/api/usage?limit=…` | Session | Recent usage rows for the authenticated user |
+| POST | `/api/provider` | Session | Proxy a chat completion (provider key stays server-side) |
+
+### GET /api/health
+
+```json
+{
+  "status": "ok",
+  "service": "zeesh-api",
+  "version": "0.1.0",
+  "time": "2026-08-09T12:00:00.000Z",
+  "database": "not_configured | connected | error",
+  "auth": "configured | not_configured"
+}
+```
+
+### POST /api/auth/register
+
+```json
+{ "email": "dev@example.com", "password": "hunter2-strong", "display_name": "Dev" }
+```
+
+`201` → `{ "user": { "id": "…", "email": "…", "display_name": "Dev" }, "token": "…", "expires_at": "2026-09-08T…" }`.
+
+- Password must be ≥ 8 characters; hashed with scrypt, never stored in
+  plaintext.
+- `409` when the email is already registered, `400` on validation failure.
+- `403` when `ZEESH_BETA_MODE=closed` and the email is not in
+  `ZEESH_BETA_ALLOWLIST` (closed beta gate, Milestone 12).
+
+### POST /api/auth/login
+
+```json
+{ "email": "dev@example.com", "password": "hunter2-strong" }
+```
+
+`200` → same shape as register. `401` on bad credentials.
+
+### POST /api/auth/logout
+
+`Authorization: Bearer <token>` → `200 { "logged_out": true }`.
+
+### GET /api/auth/me
+
+`Authorization: Bearer <token>` → `200 { "user": { "id", "email", "display_name" } }`.
+
+### POST /api/usage
+
+`user_id` in the body is **ignored** — the session is the source of truth, so a
+caller can never record usage as someone else. All token/turn fields are
+non-negative integers:
+
+```json
+{
+  "client_run_id": "cli-generated-uuid",
+  "session_id": null,
+  "project_type": "node",
+  "prompt": "Fix the login bug",
+  "status": "done",
+  "model": "openai/gpt-oss-120b",
+  "agent_turns": 4,
+  "tool_calls": 12,
+  "input_tokens": 4520,
+  "output_tokens": 890,
+  "execution_time_ms": 31240
+}
+```
+
+`201` → `{ "recorded": true, "run_id": 123 }`. Validation failures → `400`.
+Re-sending the same `client_run_id` is idempotent (reuses the run, no double
+usage row).
+
+### GET /api/usage
+
+`Authorization: Bearer <token>` → `200 { "usage": [ … ] }` limited to the
+authenticated user's rows (`?limit=`, default 20, max 100).
+
+### POST /api/provider
+
+```json
+{
+  "messages": [{ "role": "user", "content": "Hello" }],
+  "model": "openai/gpt-oss-120b",
+  "temperature": 0.2
+}
+```
+
+`200` → `{ "content": "…", "tool_calls": [], "usage": {…}, "finish_reason": "stop" }`.
+
+## Authentication model
+
+- The client (`myagent login`) sends email + password over HTTPS; the server
+  verifies the scrypt hash and returns an opaque session token.
+- The CLI stores the token locally (`~/.myagent/auth.json`, mode 0600) and
+  sends it as `Authorization: Bearer <token>`. The raw token is never stored
+  server-side — only `SHA-256(token)` in `sessions.token_hash`.
+- Sessions expire after 30 days (`sessions.expires_at`); expired/invalid tokens
+  get `401`.
+
+## Rate limiting
+
+Sliding-window, per client IP (in-memory; a shared store is a Milestone 12+
+concern once multiple serverless instances exist):
+
+| Scope | Limit | Where |
+| ----- | ----- | ----- |
+| auth | 50 attempts / 15 min (login+register) | `ZEESH_AUTH_RATE_LIMIT_MAX` |
+| api | 300 requests / 1 min (usage, provider) | `ZEESH_API_RATE_LIMIT_MAX` |
+
+`429` responses include a `Retry-After` header; the CLI surfaces the wait in
+its error message (`Too many attempts — try again in Ns`). The limiter is
+per-process and fails safe (invalid env config falls back to defaults); the
+CLI's usage reporter treats any failure as non-fatal and never interrupts the
+local agent. A shared store (Redis/Upstash) is recommended before public beta
+(M13).
+
+## Environment variables
+
+| Variable | Where | Purpose |
+| -------- | ----- | ------- |
+| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side key for `/api/provider` |
+| `DATABASE_URL` | API only | Neon PostgreSQL connection string (required for auth + usage) |
+| `ZEESH_API_URL` | CLI only | Backend URL the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
+| `ZEESH_BETA_MODE` | API only | `closed` gates registration behind the allowlist (default `open`) |
+| `ZEESH_BETA_ALLOWLIST` | API only | Comma-separated emails allowed to register when closed |
+| `ZEESH_CORS_ORIGIN` | API only | Browser origin allowed to call the API (default `*`) |
+| `ZEESH_AUTH_RATE_LIMIT_MAX` | API only | Auth rate-limit budget (default 50/15 min) |
+| `ZEESH_API_RATE_LIMIT_MAX` | API only | API rate-limit budget (default 300/min) |
+
+Placeholders in [`.env.example`](../.env.example). `.env` and other secret
+files are git-ignored.
+
+## Run locally
+
+```bash
+npm run serve                 # http://localhost:8787 (loads .env from the project root)
+curl http://localhost:8787/api/health
+
+# from another terminal — register, then use the returned token:
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"email":"dev@example.com","password":"hunter2-strong"}' \
+     http://localhost:8787/api/auth/register
+
+# or let the CLI do it (prompts for email/password, hides the password):
+myagent login
+myagent whoami
+```
+
+The CLI reports usage automatically after each agent run while logged in.
+Override the port with `PORT=9999 npm run serve`.
+
+## Deploy to Vercel
+
+`api/*.ts` are zero-config Node serverless functions — `vercel` picks them up
+automatically. `vercel.json` pins the runtime (`nodejs22.x`) and max duration
+(60s). Full instructions, env vars, migration and rollback steps are in
+**`docs/deployment.md`**.
+
+Notes:
+
+- Vercel bundles each `api/*.ts` entrypoint with esbuild; relative imports use
+  explicit `.ts` extensions, which esbuild resolves.
+- The CLI's `dist/` is irrelevant to Vercel — only `api/`, `src/` and
+  `package.json` are needed.
+- Do **not** put `GROQ_API_KEY` in any client-facing environment.
+- Every function exports `withHttp(handler)`, so CORS, preflight, safe errors
+  and request logging behave identically to the local dev server.
+- The in-memory rate limiter resets per cold start; move to Redis/Upstash
+  before public beta (Milestone 13).
+
+## Security notes (current state)
+
+- Provider keys and `DATABASE_URL` are server-side only and never reach the
+  CLI or browser.
+- Passwords are scrypt-hashed with a per-user salt; plaintext is never stored,
+  logged, or returned.
+- Sessions store only the SHA-256 hash of the token; tokens expire after 30
+  days and logout invalidates them server-side.
+- Protected endpoints (`/api/usage`, `/api/provider`, `/api/auth/me|logout`)
+  require a valid session and scope data to the authenticated user — the old
+  shared `ZEESH_API_TOKEN` (Milestone 10) has been removed.
+- Auth endpoints are rate-limited per IP; the API client times out and degrades
+  gracefully when the backend is unavailable.
+- Errors never leak internals: unexpected failures return a generic `500`
+  (details go to the server log only), provider failures return a generic
+  message, and all responses carry CORS headers with `OPTIONS` preflight.
+
+## Observability (Milestone 12)
+
+Every request is logged server-side in a single scrub-safe line
+(`[api] method=… path=… status=… latency_ms=… [user_id=…] [model=…]`), plus
+extra facts where valuable (usage: model/tokens/run_id; provider failures: the
+sanitized reason). **Never logged:** passwords, session tokens, API keys,
+`DATABASE_URL`, request bodies, private project files. All free-text fields
+pass through `scrubForLogs()` before output (`src/api/log.ts`).

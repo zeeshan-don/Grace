@@ -1,0 +1,45 @@
+{
+  "name": "myagent",
+  "version": "0.1.0",
+  "description": "A terminal AI coding agent that works inside your local codebase — free AI coding assistance, supported by developer-focused advertising (coming soon).",
+  "type": "module",
+  "bin": {
+    "myagent": "./dist/index.js"
+  },
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=23.6.0"
+  },
+  "scripts": {
+    "dev": "node src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.ts\"",
+    "serve": "node src/api/server.ts",
+    "smoke": "node scripts/smoke.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "cli",
+    "ai",
+    "coding-agent",
+    "agent",
+    "developer-tools",
+    "terminal"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "dotenv": "^17.4.2",
+    "groq-sdk": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
