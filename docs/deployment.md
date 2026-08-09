@@ -24,15 +24,25 @@ talks to this backend only for accounts + usage reporting (`zeesh login`).
 The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
 `src/` with esbuild, so the built `dist/` is **not** part of the deployment.
 
-> **ZEESH AI is not a static site** — do not set an Output Directory. Creating
-> the Vercel project stores `Output Directory: public` by default (the
-> "Other" preset default), which fails every build with *"No Output Directory
-> named 'public' found"* because this repo has no `public/` folder.
-> `vercel.json` pins `"framework": null` and `"outputDirectory": null` so
-> that setting is overridden on every deployment and only the `api/*.ts`
-> serverless functions are deployed. If you ever still see that error, clear
-> **Settings → Build & Development Settings → Output Directory** in the Vercel
-> dashboard.
+> **ZEESH AI is not a static site.** `vercel.json` pins `"framework": null`
+> and `"outputDirectory": null` and declares the `api/**/*.ts` serverless
+> functions — this is the correct, current config format (the legacy `builds`
+> array in `vercel.json` is deprecated).
+>
+> **However, Vercel dashboard Project Settings take precedence over
+> `vercel.json`.** When the project is created with no framework detected
+> (the "Other" preset), Vercel stores `Output Directory: public` in the
+> project settings. Because that stored setting wins over the
+> `outputDirectory: null` in `vercel.json`, every build fails with
+> *"No Output Directory named 'public' found"* — `vercel.json` **cannot**
+> override it.
+>
+> **Fix (one time, in the dashboard):** Project → **Settings → Build &
+> Development Settings** → clear the **Output Directory** field → **Save**,
+> then redeploy. Do **not** create a `public/` folder, and do not set an
+> Output Directory for an API-only project. If the project is not created
+> yet, when the CLI proposes `Output Directory: public`, decline/override it
+> and leave the field empty.
 
 ## 2. Neon setup
 
