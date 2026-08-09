@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { cwd } from 'node:process';
-import { PRODUCT, VERSION } from './meta.ts';
+import { PRODUCT, TAGLINE, VERSION } from './meta.ts';
 import { cmdLogin, cmdLogout, cmdRegister, cmdWhoami } from './cli/authCommands.ts';
 import { runOnce } from './cli/once.ts';
 import { runRepl } from './cli/repl.ts';
@@ -95,15 +95,15 @@ async function runSubcommand(cmd: Subcommand, arg: string): Promise<number> {
 
 function usage(): string {
   return [
-    `${PRODUCT} v${VERSION} — Terminal AI Coding Agent`,
+    `${PRODUCT} v${VERSION} — ${TAGLINE}`,
     '',
     'Usage:',
-    '  myagent                          Start the interactive REPL',
-    '  myagent "describe a task"         One-shot run, then exit',
-    '  myagent login [email]            Log in to the ZEESH AI backend',
-    '  myagent register [email]         Create an account',
-    '  myagent logout                   Log out and remove the local session',
-    '  myagent whoami                   Show the authenticated identity',
+    '  zeesh                            Start the interactive REPL',
+    '  zeesh "describe a task"          One-shot run, then exit',
+    '  zeesh login [email]              Log in to the ZEESH AI backend',
+    '  zeesh register [email]           Create an account',
+    '  zeesh logout                     Log out and remove the local session',
+    '  zeesh whoami                     Show the authenticated identity',
     '',
     'Options:',
     '  --model <id>     Override the model (e.g. openai/gpt-oss-120b)',
@@ -114,7 +114,7 @@ function usage(): string {
     'Environment:',
     '  GROQ_API_KEY     Your Groq API key (also read from .env in the project)',
     '  ZEESH_API_URL    ZEESH AI backend URL (default http://localhost:8787)',
-    '  MYAGENT_SHELL    Override the shell used by run_command',
+    '  ZEESH_SHELL      Override the shell used by run_command',
     '  NO_COLOR         Disable ANSI colors',
   ].join('\n');
 }

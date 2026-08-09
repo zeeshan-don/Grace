@@ -26,7 +26,7 @@ export interface IgnoreRule {
   baseRel: string;
 }
 
-const ALWAYS_IGNORED = new Set(['.git', 'node_modules', '.myagent']);
+const ALWAYS_IGNORED = new Set(['.git', 'node_modules', '.zeesh', '.myagent']); // .myagent = pre-rename state dir
 
 function globToRegExp(pattern: string): RegExp {
   let out = '';

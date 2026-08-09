@@ -64,7 +64,7 @@ function killProcessTree(pid: number | undefined): void {
 }
 
 export function shellForPlatform(): string | undefined {
-  const custom = process.env.MYAGENT_SHELL;
+  const custom = process.env.ZEESH_SHELL;
   if (custom) return custom;
   if (process.platform === 'win32') return process.env.ComSpec || 'cmd.exe';
   return process.env.SHELL || '/bin/sh';

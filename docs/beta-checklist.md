@@ -14,10 +14,10 @@ are done.
 - [ ] **Database migration** — apply `db/migrations/001_init.sql`,
       `002_auth.sql`, `003_closed_beta.sql` to Neon; verify with
       `SELECT COUNT(*) FROM users;` (existing data intact)
-- [ ] **Registration** — `myagent register` → "Account created — logged in as …"
-- [ ] **Login** — `myagent login` → "Logged in as …"
-- [ ] **Logout** — `myagent logout` → "Logged out — local session removed."
-- [ ] **Authenticated API** — `myagent whoami` → "Status: valid"
+- [ ] **Registration** — `zeesh register` → "Account created — logged in as …"
+- [ ] **Login** — `zeesh login` → "Logged in as …"
+- [ ] **Logout** — `zeesh logout` → "Logged out — local session removed."
+- [ ] **Authenticated API** — `zeesh whoami` → "Status: valid"
 - [ ] **Usage reporting** — run one agent task while logged in, then
       `SELECT COUNT(*) FROM usage;` on Neon (row appears; user_id matches)
 - [ ] **Rate limiting** — `ZEESH_AUTH_RATE_LIMIT_MAX=3` + 5 failed logins →
@@ -26,7 +26,7 @@ are done.
       hashed session tokens, cross-user access prevention, no stack traces in
       API errors, secret-safe logging
 - [ ] **CLI installation** — fresh machine: `npm install` → `npm run build` →
-      `npm link` → `myagent --version` prints the version
+      `npm link` → `zeesh --version` prints the version
 - [ ] **Real project test** — ask the agent to create → modify → break → fix →
       verify a small app in a throwaway project (see
       `docs/validation-milestone-01.md` for the format)
@@ -45,7 +45,7 @@ are done.
 - [ ] `vercel --prod` deployed
 - [ ] `curl <prod>/api/health` → `database:"connected"`
 - [ ] Allowlisted tester can register; non-allowlisted email gets `403`
-- [ ] CLI points at production: `ZEESH_API_URL=<prod>` in `~/.myagent/env`
+- [ ] CLI points at production: `ZEESH_API_URL=<prod>` in `~/.zeesh/env`
 - [ ] Tester login + one agent run recorded in Neon usage
 
 ## Go / no-go

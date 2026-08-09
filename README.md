@@ -1,4 +1,6 @@
-# myagent — Terminal AI Coding Agent
+# ZEESH AI
+
+An AI coding agent that runs inside your local codebase.
 
 An original, open-source AI coding agent that runs inside your local codebase from
 the terminal. The concept: **free AI coding assistance funded by developer-focused
@@ -6,8 +8,8 @@ advertising** (not yet implemented — see [Economics & Advertising](#economics-
 
 ```
 ╭──────────────────────────────────────────────────────╮
-│  myagent  v0.1.0                                     │
-│  Terminal AI Coding Agent                            │
+│              ZEESH AI  v0.1.0                        │
+│              AI Coding Agent                         │
 │                                                      │
 │  Free AI coding — supported by developer-focused     │
 │  advertising (coming soon)                           │
@@ -15,8 +17,8 @@ advertising** (not yet implemented — see [Economics & Advertising](#economics-
 ```
 
 ```bash
-myagent                # interactive REPL
-myagent "Fix the login bug in this project"   # one-shot run
+zeesh                  # interactive REPL
+zeesh "Fix the login bug in this project"   # one-shot run
 ```
 
 The agent inspects the repository, reads the relevant files, edits code, runs
@@ -27,7 +29,7 @@ or it needs your approval — then reports exactly what changed.
 Groq, agent loop, file tools, terminal execution, safety, git, provider
 abstraction), the cloud backend foundation (M10: Vercel-ready API, server-side
 provider keys, Neon schema + usage recording), real authentication
-(M11: user accounts + sessions, `myagent login/logout/whoami`, resilient CLI→
+(M11: user accounts + sessions, `zeesh login/logout/whoami`, resilient CLI→
 backend usage reporting) and closed-beta readiness (M12: production-safe
 migrations + indexes, auth/error hardening, CORS + preflight, secret-safe
 request logging, closed-beta registration gate, Vercel config, deployment + beta
@@ -49,23 +51,23 @@ type stripping).
 ```bash
 npm install
 npm run build
-npm link            # makes `myagent` available globally
-myagent
+npm link            # makes `zeesh` available globally
+zeesh
 ```
 
 Then configure your AI key (see below) and try your first task:
 
 ```bash
-myagent "Create a small Node app with a /hello endpoint in this project"
-myagent "Add a /health endpoint and a test for it"
+zeesh "Create a small Node app with a /hello endpoint in this project"
+zeesh "Add a /health endpoint and a test for it"
 ```
 
 Login is **optional** — local/offline use works without it:
 
 ```bash
-myagent register    # create a ZEESH AI account (optional)
-myagent login       # log in → automatic usage reporting to the backend
-myagent whoami
+zeesh register    # create a ZEESH AI account (optional)
+zeesh login       # log in → automatic usage reporting to the backend
+zeesh whoami
 ```
 
 ### Configuration
@@ -74,16 +76,24 @@ The API key is read from (in order of precedence):
 
 1. The `GROQ_API_KEY` environment variable
 2. `<project>/.env` (auto-loaded by the CLI)
-3. `~/.myagent/env`
+3. `~/.zeesh/env`
 
 ```bash
 echo "GROQ_API_KEY=..." > .env          # per project
 # or
-echo "GROQ_API_KEY=..." > ~/.myagent/env   # for every project
+echo "GROQ_API_KEY=..." > ~/.zeesh/env   # for every project
 ```
 
-The model is persisted in `~/.myagent/config.json` and can be changed at any
+The model is persisted in `~/.zeesh/config.json` and can be changed at any
 time with `/model <id>` or `--model <id>`.
+
+> **Migrating from an older install:** versions before the rename stored
+> config in `~/.myagent/`. On first run the CLI **copies** `~/.myagent/` into
+> `~/.zeesh/` (env, config.json, auth.json, session/undo state) and never
+> deletes the old directory — remove `~/.myagent/` yourself once you have
+> confirmed everything migrated. The project-local state directory was also
+> renamed (`.myagent/` → `.zeesh/` in each project); old `.myagent/` folders
+> stay git-ignored and can be deleted by hand.
 
 ### Backend / API environment (Milestones 10–11)
 
@@ -131,10 +141,10 @@ favour of real per-user sessions.
 ### Authentication (Milestone 11)
 
 ```bash
-myagent register [email]   # create an account (password is hidden, ≥ 8 chars)
-myagent login [email]      # log in — stores the session in ~/.myagent/auth.json (0600)
-myagent whoami             # show the authenticated identity
-myagent logout             # invalidate the session server-side and remove it locally
+zeesh register [email]   # create an account (password is hidden, ≥ 8 chars)
+zeesh login [email]      # log in — stores the session in ~/.zeesh/auth.json (0600)
+zeesh whoami             # show the authenticated identity
+zeesh logout             # invalidate the session server-side and remove it locally
 ```
 
 The session token is persisted locally with restrictive file permissions and
@@ -176,8 +186,8 @@ your request
   package manager, test/build commands).
 - **Context management** estimates tokens, trims the oldest tool results, and
   truncates oversized outputs so the window stays small.
-- **History** persists in `.myagent/session.json` (auto-added to `.gitignore`);
-  every file the agent modifies is snapshotted in `.myagent/undo/` for `/undo`.
+- **History** persists in `.zeesh/session.json` (auto-added to `.gitignore`);
+  every file the agent modifies is snapshotted in `.zeesh/undo/` for `/undo`.
 
 ## Safety
 
@@ -197,7 +207,7 @@ your request
 
 ```
 LOCAL CLI (works offline; reports usage when logged in)
-      │  (M11: myagent login/logout/whoami → session token)
+      │  (M11: zeesh login/logout/whoami → session token)
       ▼
 ZEESH AI API (src/api + api/)   ← Vercel serverless · keys stay server-side
       │                            (session auth, scrypt passwords, rate limits)
@@ -232,7 +242,7 @@ src/
               reporting.ts (resilient usage reporting)
   cli/        authCommands.ts (login/register/logout/whoami) · input.ts (hidden passwords)
 api/          Vercel zero-config serverless functions (health, auth/*, usage, provider)
-db/           migrations/001_init.sql + 002_auth.sql (Neon schema)
+db/           migrations/001_init.sql + 002_auth.sql + 003_closed_beta.sql (Neon schema)
 tests/        unit + agent-loop + API + auth + CLI tests (node --test)
 ```
 
@@ -267,7 +277,7 @@ LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI provide
   production keys never reach the CLI or the browser.
 - **Neon PostgreSQL** — `src/api/db.ts` connects via `DATABASE_URL` (lazily,
   so the API still boots without a database). Schema in
-  `db/migrations/001_init.sql` + `002_auth.sql`.
+  `db/migrations/001_init.sql` + `002_auth.sql` + `003_closed_beta.sql`.
 - **Usage recording** — the CLI reports `user_id`, `model`, `input_tokens`,
   `output_tokens`, `agent_turns`, `timestamp` and `execution_time_ms` after
   each run when logged in (`src/auth/reporting.ts`). Reporting is
@@ -279,9 +289,9 @@ Run it locally:
 npm run serve                  # http://localhost:8787
 npm run smoke                  # scripted health + endpoint smoke test
 curl http://localhost:8787/api/health
-myagent register               # create an account
-myagent login                  # log in (usage reporting turns on)
-myagent whoami
+zeesh register               # create an account
+zeesh login                  # log in (usage reporting turns on)
+zeesh whoami
 ```
 
 Deployment to Vercel is documented and ready (`docs/deployment.md` +
@@ -348,7 +358,7 @@ for it:
   Neon (`usage` + `agent_runs`, schema in `db/migrations/`) and estimates
   per-user AI cost via the `user_economics` view
   (`docs/database.md`, `docs/api.md`). The CLI reports usage to it after each
-  run whenever a session exists (`myagent login`).
+  run whenever a session exists (`zeesh login`).
 - Ads must be developer-focused (cloud, hosting, dev tools, AI APIs, DBs) and
   must never use private source code, secrets, or user data.
 
@@ -358,9 +368,9 @@ for it:
   chunk via `x_groq`); the CLI reports the estimate to the backend per run.
 - No multi-turn "continue after iteration limit" resume UI beyond sending
   another message.
-- `run_command` on Windows uses `cmd.exe` by default; set `MYAGENT_SHELL` to
+- `run_command` on Windows uses `cmd.exe` by default; set `ZEESH_SHELL` to
   your shell of choice (e.g. `bash`) if you need POSIX builtins.
-- Usage reporting requires the user to log in (`myagent login`); without a
+- Usage reporting requires the user to log in (`zeesh login`); without a
   session the CLI stays fully offline and records nothing.
 - The rate limiter is in-memory (per server instance) — a shared store
   (Redis/Upstash) is a closed-beta concern.
@@ -371,6 +381,3 @@ for it:
 ## License
 
 MIT
-#   Z e e s h - A i  
- #   Z e e s h - A i  
- 

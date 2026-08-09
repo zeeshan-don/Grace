@@ -1,4 +1,7 @@
 /** Product identity. Keep in sync with package.json on release. */
 export const VERSION = '0.1.0';
-export const PRODUCT = 'myagent';
-export const TAGLINE = 'Terminal AI Coding Agent';
+/** CLI command name (npm bin entry). */
+export const PRODUCT = 'zeesh';
+/** Human-facing product name, used in the banner and system prompt. */
+export const DISPLAY_NAME = 'ZEESH AI';
+export const TAGLINE = 'AI Coding Agent';

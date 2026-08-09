@@ -24,7 +24,7 @@ import {
 } from '../src/auth/session.ts';
 import { createMemoryDb } from './helpers/memoryDb.ts';
 
-const tmp = mkdtempSync(join(tmpdir(), 'myagent-auth-test-'));
+const tmp = mkdtempSync(join(tmpdir(), 'zeesh-auth-test-'));
 
 after(() => {
   rmSync(tmp, { recursive: true, force: true });

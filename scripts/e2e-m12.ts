@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   // ---- throwaway project + temp HOME for the CLI session -------------------
   const project = mkdtempSync(join(tmpdir(), 'zeesh-m12-e2e-'));
   const tempHome = mkdtempSync(join(tmpdir(), 'zeesh-m12-home-'));
-  mkdirSync(join(tempHome, '.myagent'), { recursive: true });
+  mkdirSync(join(tempHome, '.zeesh'), { recursive: true });
   console.log(`throwaway project: ${project}`);
 
   // ---- backend with the in-memory DB on a real port -------------------------
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
     });
 
   try {
-    // 1. login (register → persist session exactly like `myagent login` does)
+    // 1. login (register → persist session exactly like `zeesh login` does)
     const client = new ApiClient(apiUrl, 8000);
     const auth = await client.register('e2e@example.com', 'hunter2-strong', 'E2E Tester');
     saveSession(
@@ -116,7 +116,7 @@ async function main(): Promise<void> {
         expiresAt: auth.expires_at,
         createdAt: new Date().toISOString(),
       },
-      join(tempHome, '.myagent', 'auth.json'),
+      join(tempHome, '.zeesh', 'auth.json'),
     );
     check('register + persisted session', true, auth.user.email);
     check('backend knows the session', (await client.me(auth.token)).email === 'e2e@example.com');

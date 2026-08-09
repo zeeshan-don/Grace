@@ -1,10 +1,10 @@
 {
-  "name": "myagent",
+  "name": "zeesh",
   "version": "0.1.0",
-  "description": "A terminal AI coding agent that works inside your local codebase — free AI coding assistance, supported by developer-focused advertising (coming soon).",
+  "description": "ZEESH AI — a terminal AI coding agent that works inside your local codebase — free AI coding assistance, supported by developer-focused advertising (coming soon).",
   "type": "module",
   "bin": {
-    "myagent": "./dist/index.js"
+    "zeesh": "./dist/index.js"
   },
   "main": "dist/index.js",
   "engines": {

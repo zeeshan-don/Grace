@@ -10,14 +10,14 @@ interface Snapshot {
 
 /**
  * Records the pre-modification content of files the agent changes, so the
- * user can `/undo` the most recent change. Backed by `.myagent/undo/`.
+ * user can `/undo` the most recent change. Backed by `.zeesh/undo/`.
  */
 export class UndoStore {
   private readonly dir: string;
   private counter = 0;
 
   constructor(projectRoot: string) {
-    this.dir = join(projectRoot, '.myagent', 'undo');
+    this.dir = join(projectRoot, '.zeesh', 'undo');
     ensureDir(this.dir);
     this.counter = readdirSync(this.dir).filter((f) => f.endsWith('.json')).length;
   }

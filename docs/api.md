@@ -8,7 +8,7 @@ LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI provide
 ```
 
 The local CLI keeps working offline with its own local Groq key; once the user
-runs `myagent login`, the CLI also authenticates to this API and reports usage
+runs `zeesh login`, the CLI also authenticates to this API and reports usage
 (and can proxy model calls through it). **Deployment is documented and ready**
 (see `docs/deployment.md`) but has not been performed yet — no credentials are
 available in this environment.
@@ -137,9 +137,9 @@ authenticated user's rows (`?limit=`, default 20, max 100).
 
 ## Authentication model
 
-- The client (`myagent login`) sends email + password over HTTPS; the server
+- The client (`zeesh login`) sends email + password over HTTPS; the server
   verifies the scrypt hash and returns an opaque session token.
-- The CLI stores the token locally (`~/.myagent/auth.json`, mode 0600) and
+- The CLI stores the token locally (`~/.zeesh/auth.json`, mode 0600) and
   sends it as `Authorization: Bearer <token>`. The raw token is never stored
   server-side — only `SHA-256(token)` in `sessions.token_hash`.
 - Sessions expire after 30 days (`sessions.expires_at`); expired/invalid tokens
@@ -190,8 +190,8 @@ curl -X POST -H "Content-Type: application/json" \
      http://localhost:8787/api/auth/register
 
 # or let the CLI do it (prompts for email/password, hides the password):
-myagent login
-myagent whoami
+zeesh login
+zeesh whoami
 ```
 
 The CLI reports usage automatically after each agent run while logged in.
@@ -200,9 +200,9 @@ Override the port with `PORT=9999 npm run serve`.
 ## Deploy to Vercel
 
 `api/*.ts` are zero-config Node serverless functions — `vercel` picks them up
-automatically. `vercel.json` pins the runtime (`nodejs22.x`) and max duration
-(60s). Full instructions, env vars, migration and rollback steps are in
-**`docs/deployment.md`**.
+automatically. `vercel.json` sets the max duration (60s); the Node.js runtime
+is auto-detected by Vercel. Full instructions, env vars, migration and
+rollback steps are in **`docs/deployment.md`**.
 
 Notes:
 

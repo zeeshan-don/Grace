@@ -32,7 +32,7 @@ export async function requireSession(req: ApiRequest, db: Db): Promise<AuthResul
     return {
       ok: false,
       status: 401,
-      error: 'Missing bearer token. Log in first with "myagent login".',
+      error: 'Missing bearer token. Log in first with "zeesh login".',
     };
   }
   const user = await new AuthService(db).authenticate(token);
@@ -40,7 +40,7 @@ export async function requireSession(req: ApiRequest, db: Db): Promise<AuthResul
     return {
       ok: false,
       status: 401,
-      error: 'Invalid or expired session token. Log in again with "myagent login".',
+      error: 'Invalid or expired session token. Log in again with "zeesh login".',
     };
   }
   return { ok: true, user };

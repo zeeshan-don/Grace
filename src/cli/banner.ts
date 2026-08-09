@@ -1,4 +1,4 @@
-import { PRODUCT, TAGLINE, VERSION } from '../meta.ts';
+import { DISPLAY_NAME, TAGLINE, VERSION } from '../meta.ts';
 import { c } from './colors.ts';
 
 const W = 54; // inner box width
@@ -12,7 +12,7 @@ export function renderBanner(projectLabel: string, providerStatus: string): stri
   const bottom = c.cyan('╰' + '─'.repeat(W) + '╯');
   const lines = [
     top,
-    boxLine('  ' + c.bold(PRODUCT) + '  ' + c.dim(`v${VERSION}`)),
+    boxLine('  ' + c.bold(DISPLAY_NAME) + '  ' + c.dim(`v${VERSION}`)),
     boxLine('  ' + c.dim(TAGLINE)),
     boxLine(''),
     boxLine('  ' + c.dim('Free AI coding — supported by developer-focused')),
@@ -46,7 +46,7 @@ export function renderHelp(): string {
     c.dim('  edit files, run tests, fix errors and report what changed.'),
     '',
     c.bold('One-shot mode'),
-    c.dim('  myagent "Fix the login bug"   runs once and exits'),
-    c.dim('  myagent --yes "…"             auto-approve flagged commands (careful!)'),
+    c.dim('  zeesh "Fix the login bug"   runs once and exits'),
+    c.dim('  zeesh --yes "…"             auto-approve flagged commands (careful!)'),
   ].join('\n');
 }

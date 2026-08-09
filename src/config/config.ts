@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
@@ -17,12 +17,53 @@ export interface AppConfig {
   model?: string;
 }
 
-const CONFIG_DIR = join(homedir(), '.myagent');
+const CONFIG_DIR = join(homedir(), '.zeesh');
 export const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 
 /**
+ * One-time migration from the legacy `~/.myagent/` directory (pre-rename).
+ *
+ * Copies the old directory's contents into `~/.zeesh/` when the new directory
+ * does not exist yet. It is copy-only: the legacy directory is never deleted
+ * automatically, so nothing is destroyed if a copy is partial or fails.
+ * Idempotent and safe to run on every start.
+ */
+export function migrateLegacyConfig(): void {
+  try {
+    const legacy = join(homedir(), '.myagent');
+    if (!existsSync(legacy) || existsSync(CONFIG_DIR)) return;
+    if (readdirSync(legacy).length === 0) return; // nothing to migrate
+    mkdirSync(CONFIG_DIR, { recursive: true });
+    copyTree(legacy, CONFIG_DIR);
+  } catch {
+    // Best-effort — never break the CLI over a failed migration.
+  }
+}
+
+function copyTree(from: string, to: string): void {
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const src = join(from, entry.name);
+    const dest = join(to, entry.name);
+    if (entry.isDirectory()) {
+      mkdirSync(dest, { recursive: true });
+      copyTree(src, dest);
+    } else if (entry.isFile()) {
+      copyFileSync(src, dest);
+      try {
+        chmodSync(dest, statSync(src).mode & 0o777); // preserve 0600 on auth.json
+      } catch {
+        // best-effort
+      }
+    }
+  }
+}
+
+/** Runs once per process before any config path is used. */
+migrateLegacyConfig();
+
+/**
  * Loads configuration into process.env (never exposes values to the model):
- *  1. `~/.myagent/env` — the user's myagent-level secrets
+ *  1. `~/.zeesh/env` — the user's zeesh-level secrets
  *  2. `<project>/.env`  — the project's own environment
  * Process-level env vars always take precedence.
  */

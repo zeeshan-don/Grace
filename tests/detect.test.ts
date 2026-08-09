@@ -6,7 +6,7 @@ import test from 'node:test';
 import { detectProject } from '../src/project/detect.ts';
 
 function tempProject(): string {
-  return mkdtempSync(join(tmpdir(), 'myagent-detect-'));
+  return mkdtempSync(join(tmpdir(), 'zeesh-detect-'));
 }
 
 test('detects a Node/Next project with pnpm', () => {

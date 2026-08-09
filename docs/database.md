@@ -4,7 +4,7 @@ The cloud backend records accounts, sessions, usage and economics in **Neon
 PostgreSQL**. The schema lives in [`db/migrations/`](../db/migrations/) and is
 wired into the API via the `DATABASE_URL` environment variable
 (`src/api/db.ts`). The CLI stays fully local and offline-capable; once the user
-logs in (`myagent login`) it reports usage through the API.
+logs in (`zeesh login`) it reports usage through the API.
 
 ## Design goals
 
@@ -92,7 +92,7 @@ CLI ──POST /api/provider──► Backend ──► Model router ──► A
 
 The CLI keeps working offline (local key) while the backend path adds accounts,
 rate limiting, central usage tracking and ad slots. The CLI now reports usage
-to the backend whenever a valid session exists (`myagent login`); reporting is
+to the backend whenever a valid session exists (`zeesh login`); reporting is
 non-fatal — a backend outage never breaks the local agent.
 
 ## Closed beta (Milestone 12)

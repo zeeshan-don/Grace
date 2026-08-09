@@ -62,15 +62,19 @@ export function createRuntime(root: string, opts: RuntimeOptions = {}): Runtime 
 export function ensureStateDirIgnore(root: string): void {
   if (!isGitRepo(root)) return;
   const gi = join(root, '.gitignore');
-  const entry = '.myagent/';
+  const entry = '.zeesh/';
+  const legacyEntry = '.myagent/'; // still ignored for projects created before the rename
   try {
     if (existsSync(gi)) {
       const content = readFileSync(gi, 'utf8');
-      if (!content.split(/\r?\n/).some((l) => l.trim() === '.myagent/')) {
+      if (!content.split(/\r?\n/).some((l) => l.trim() === entry)) {
         appendFileSync(gi, (content.endsWith('\n') ? '' : '\n') + entry + '\n');
       }
+      if (!content.split(/\r?\n/).some((l) => l.trim() === legacyEntry)) {
+        appendFileSync(gi, legacyEntry + '\n');
+      }
     } else {
-      writeFileSync(gi, entry + '\n', 'utf8');
+      writeFileSync(gi, entry + '\n' + legacyEntry + '\n', 'utf8');
     }
   } catch {
     // best-effort

@@ -32,9 +32,10 @@ test('anchored patterns only match at root', () => {
   assert.equal(isIgnored('sub/root-only.txt', false, rules), false);
 });
 
-test('always ignores .git and .myagent', () => {
+test('always ignores .git, .zeesh and legacy .myagent', () => {
   assert.equal(isIgnored('.git/config', false, []), true);
-  assert.equal(isIgnored('.myagent/session.json', false, []), true);
+  assert.equal(isIgnored('.zeesh/session.json', false, []), true);
+  assert.equal(isIgnored('.myagent/session.json', false, []), true); // pre-rename state dir
 });
 
 test('dir-only rule does not ignore same-named file', () => {

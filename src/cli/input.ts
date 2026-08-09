@@ -2,7 +2,7 @@
  * Terminal input helpers (Milestone 11).
  *
  * `promptHidden` reads a line without echoing it to the terminal, used for
- * passwords during `myagent login/register`. Falls back to an empty string in
+ * passwords during `zeesh login/register`. Falls back to an empty string in
  * non-TTY contexts (CI) so callers can handle it gracefully.
  */
 import { stdin, stdout } from 'node:process';

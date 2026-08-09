@@ -1,10 +1,10 @@
 /**
  * Local session persistence (Milestone 11).
  *
- * The session token from `myagent login` is stored in `~/.myagent/auth.json`
+ * The session token from `zeesh login` is stored in `~/.zeesh/auth.json`
  * with restrictive file permissions (0o600) so other OS users cannot read it.
  * The token is never logged, never sent to the model, and can be wiped with
- * `myagent logout`.
+ * `zeesh logout`.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -27,7 +27,7 @@ export interface StoredSession {
   createdAt: string;
 }
 
-const DEFAULT_PATH = join(homedir(), '.myagent', 'auth.json');
+const DEFAULT_PATH = join(homedir(), '.zeesh', 'auth.json');
 
 export function authSessionPath(): string {
   return DEFAULT_PATH;

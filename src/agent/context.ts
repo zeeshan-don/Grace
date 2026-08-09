@@ -13,7 +13,7 @@ export function buildSystemPrompt(info: ProjectInfo): string {
   if (info.buildCommand) projectBits.push(`build:${info.buildCommand}`);
 
   return [
-    'You are myagent, a coding agent working in the user\'s repository.',
+    'You are ZEESH AI, a coding agent working in the user\'s repository.',
     `Project: ${projectBits.join(' · ')} · root ${info.root}`,
     '',
     'Workflow:',

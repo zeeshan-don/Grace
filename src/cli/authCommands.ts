@@ -1,8 +1,8 @@
 /**
- * Auth CLI commands (Milestone 11): `myagent login|register|logout|whoami`.
+ * Auth CLI commands (Milestone 11): `zeesh login|register|logout|whoami`.
  *
  * Login/register prompt for credentials (passwords are hidden), call the
- * backend, and persist the session token in ~/.myagent/auth.json (0600).
+ * backend, and persist the session token in ~/.zeesh/auth.json (0600).
  * Logout invalidates the session server-side and wipes the local copy.
  * Whoami shows the authenticated identity, validating against the server
  * when reachable and degrading to the cached session when offline.
@@ -13,7 +13,7 @@ import { clearSession, loadSession, saveSession, sessionExpired, type StoredSess
 import { c } from './colors.ts';
 import { promptHidden, promptText } from './input.ts';
 
-/** `myagent login [email]` */
+/** `zeesh login [email]` */
 export async function cmdLogin(arg: string): Promise<number> {
   const existing = loadSession();
   const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
@@ -33,7 +33,7 @@ export async function cmdLogin(arg: string): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      console.log(c.yellow('Invalid email or password. No account yet? Try "myagent register".'));
+      console.log(c.yellow('Invalid email or password. No account yet? Try "zeesh register".'));
     } else if (err instanceof ApiError && err.status === 429) {
       console.log(c.yellow(`Too many login attempts — try again in ${err.retryAfterSeconds ?? 60}s.`));
     } else if (err instanceof ApiError && err.status === 403) {
@@ -45,7 +45,7 @@ export async function cmdLogin(arg: string): Promise<number> {
   }
 }
 
-/** `myagent register [email]` — create an account (password ≥ 8 chars). */
+/** `zeesh register [email]` — create an account (password ≥ 8 chars). */
 export async function cmdRegister(arg: string): Promise<number> {
   const existing = loadSession();
   const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
@@ -70,7 +70,7 @@ export async function cmdRegister(arg: string): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) {
-      console.log(c.yellow('An account with this email already exists. Try "myagent login".'));
+      console.log(c.yellow('An account with this email already exists. Try "zeesh login".'));
     } else if (err instanceof ApiError && err.status === 429) {
       console.log(c.yellow(`Too many attempts — try again in ${err.retryAfterSeconds ?? 60}s.`));
     } else if (err instanceof ApiError && err.status === 403) {
@@ -82,7 +82,7 @@ export async function cmdRegister(arg: string): Promise<number> {
   }
 }
 
-/** `myagent logout` */
+/** `zeesh logout` */
 export async function cmdLogout(): Promise<number> {
   const session = loadSession();
   if (!session) {
@@ -100,11 +100,11 @@ export async function cmdLogout(): Promise<number> {
   return 0;
 }
 
-/** `myagent whoami` */
+/** `zeesh whoami` */
 export async function cmdWhoami(): Promise<number> {
   const session = loadSession();
   if (!session) {
-    console.log(c.dim('Not logged in. Run "myagent login" to connect to the ZEESH AI backend.'));
+    console.log(c.dim('Not logged in. Run "zeesh login" to connect to the ZEESH AI backend.'));
     return 1;
   }
 
@@ -115,7 +115,7 @@ export async function cmdWhoami(): Promise<number> {
   console.log(`  Expires:   ${session.expiresAt ? new Date(session.expiresAt).toLocaleString() : '—'}`);
 
   if (sessionExpired(session)) {
-    console.log(c.yellow('  Status:    expired — run "myagent login" again.'));
+    console.log(c.yellow('  Status:    expired — run "zeesh login" again.'));
     return 1;
   }
 
@@ -127,7 +127,7 @@ export async function cmdWhoami(): Promise<number> {
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       clearSession();
-      console.log(c.yellow('  Status:    invalid session — run "myagent login" again.'));
+      console.log(c.yellow('  Status:    invalid session — run "zeesh login" again.'));
       return 1;
     }
     console.log(c.dim('  Status:    cannot reach backend (offline) — using cached session'));

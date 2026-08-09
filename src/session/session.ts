@@ -20,7 +20,7 @@ const EMPTY_STATS: SessionStats = { runs: 0, toolCalls: 0, inputTokens: 0, outpu
 
 /**
  * Persists the conversation and tool history for the current project under
- * `.myagent/session.json`. History is used to continue multi-turn tasks and
+ * `.zeesh/session.json`. History is used to continue multi-turn tasks and
  * is wiped by `/clear`. Never contains secrets: tool outputs are redacted
  * before they are stored.
  */
@@ -32,8 +32,8 @@ export class Session {
   private readonly path: string;
 
   constructor(projectRoot: string) {
-    this.path = join(projectRoot, '.myagent', 'session.json');
-    ensureDir(join(projectRoot, '.myagent'));
+    this.path = join(projectRoot, '.zeesh', 'session.json');
+    ensureDir(join(projectRoot, '.zeesh'));
     this.load();
   }
 

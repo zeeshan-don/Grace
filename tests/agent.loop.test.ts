@@ -50,7 +50,7 @@ class FakeProvider implements AIProvider {
 }
 
 function tempProject(): string {
-  return mkdtempSync(join(tmpdir(), 'myagent-loop-'));
+  return mkdtempSync(join(tmpdir(), 'zeesh-loop-'));
 }
 
 function setup(root: string, askPermission: (c: string, r: string[]) => Promise<boolean> = async () => false) {
@@ -115,7 +115,7 @@ test('agent loop reads a file, edits it, and reports what changed', async () => 
   assert.ok(statuses.some((s) => s.includes('edit_file')));
 
   // Session persisted
-  assert.ok(existsSync(join(root, '.myagent', 'session.json')));
+  assert.ok(existsSync(join(root, '.zeesh', 'session.json')));
   assert.equal(session.stats.toolCalls, 2);
   assert.equal(session.stats.inputTokens, 300);
 

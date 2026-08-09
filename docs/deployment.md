@@ -9,7 +9,7 @@ LOCAL CLI  →  ZEESH AI API (Vercel)  →  Neon PostgreSQL  →  AI providers (
 ```
 
 The local CLI itself is not deployed: it runs on the developer's machine and
-talks to this backend only for accounts + usage reporting (`myagent login`).
+talks to this backend only for accounts + usage reporting (`zeesh login`).
 
 ---
 
@@ -17,8 +17,8 @@ talks to this backend only for accounts + usage reporting (`myagent login`).
 
 1. Install the CLI: `npm i -g vercel`
 2. From the repo root, run `vercel` and follow the prompts (create a new
-   project, e.g. `zeesh-ai`). `vercel.json` pins the functions to the
-   Node 22 runtime with a 60s max duration.
+   project, e.g. `zeesh-ai`). `vercel.json` sets a 60s max duration; the
+   Node.js runtime is auto-detected for the zero-config `api/*.ts` functions.
 3. Link the project for future deploys: `vercel link`
 
 The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
@@ -54,7 +54,7 @@ The CLI reads `ZEESH_API_URL` to know which backend to log in to. In production
 every tester should point it at the deployed backend:
 
 ```bash
-# per machine, in ~/.myagent/env
+# per machine, in ~/.zeesh/env
 ZEESH_API_URL=https://zeesh-ai.vercel.app
 ```
 
@@ -110,9 +110,9 @@ curl -H "Authorization: Bearer <token>" https://<your-project>.vercel.app/api/au
 
 # 5. CLI against production
 export ZEESH_API_URL=https://<your-project>.vercel.app
-myagent login
-myagent whoami
-myagent logout
+zeesh login
+zeesh whoami
+zeesh logout
 ```
 
 ## 7. Rollback considerations
@@ -134,9 +134,9 @@ myagent logout
 
 - `package.json` `engines: ">=23.6.0"` applies to the **CLI** (it runs
   TypeScript directly via native type stripping). The Vercel functions are
-  esbuild-bundled and pinned to `nodejs22.x` (`vercel.json`) — they only use
-  Node 18+ features (`fetch`, `AbortSignal.timeout`), so the runtime mismatch
-  is expected and safe.
+  esbuild-bundled and run on Vercel's default Node.js runtime — they only use
+  Node 18+ features (`fetch`, `AbortSignal.timeout`), so the difference from
+  the CLI's Node version is expected and safe.
 - The middleware (`withHttp`) reassigns `res.status` to capture response
   codes for logging — verified locally in tests and by `npm run smoke`; after
   the first production deploy, sanity-check one response with

@@ -90,7 +90,7 @@ export async function cmdStatus(runtime: Runtime): Promise<void> {
 
   console.log(c.bold('Runtime'));
   console.log(`  node ${process.version} · ${process.platform}`);
-  console.log(`  State dir:    ${shortPath(runtime.root + '/.myagent', homedir())}`);
+  console.log(`  State dir:    ${shortPath(runtime.root + '/.zeesh', homedir())}`);
 }
 
 export async function cmdDiff(runtime: Runtime): Promise<void> {

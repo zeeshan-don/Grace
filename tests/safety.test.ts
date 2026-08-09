@@ -94,8 +94,8 @@ test('flags chained reads of protected files', () => {
 });
 
 test('symlink escape is blocked by realpath containment', () => {
-  const root = mkdtempSync(join(tmpdir(), 'myagent-sym-')) as string;
-  const outside = mkdtempSync(join(tmpdir(), 'myagent-out-')) as string;
+  const root = mkdtempSync(join(tmpdir(), 'zeesh-sym-')) as string;
+  const outside = mkdtempSync(join(tmpdir(), 'zeesh-out-')) as string;
   writeFileSync(join(outside, 'secret.txt'), 'shh');
   let linked = false;
   try {
@@ -113,7 +113,7 @@ test('symlink escape is blocked by realpath containment', () => {
 });
 
 test('read_file refuses to read a protected file through a symlink', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'myagent-symenv-')) as string;
+  const root = mkdtempSync(join(tmpdir(), 'zeesh-symenv-')) as string;
   writeFileSync(join(root, '.env'), 'SECRET=123');
   let linked = false;
   try {

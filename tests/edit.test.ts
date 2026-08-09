@@ -7,7 +7,7 @@ import { countOccurrences, replaceAll, createEditFileTool } from '../src/tools/e
 import type { ToolContext } from '../src/tools/registry.ts';
 
 function tempProject(): string {
-  return mkdtempSync(join(tmpdir(), 'myagent-edit-'));
+  return mkdtempSync(join(tmpdir(), 'zeesh-edit-'));
 }
 
 function ctx(root: string): ToolContext {

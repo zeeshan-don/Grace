@@ -56,7 +56,7 @@ export function createListDirectoryTool(ctx: ToolContext): Tool {
             continue;
           }
           const isDir = st.isDirectory();
-          // Respect .gitignore (skips .git, node_modules, .myagent, etc.)
+          // Respect .gitignore (skips .git, node_modules, .zeesh, .myagent, etc.)
           if (isIgnored(rel, isDir, frameRules)) continue;
 
           const indent = '  '.repeat(level);
