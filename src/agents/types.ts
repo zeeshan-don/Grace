@@ -28,8 +28,12 @@ export type AgentRole =
  */
 export type Capability = 'read' | 'write' | 'execute' | 'diff' | 'web' | 'browser';
 
-/** Model selection hint; the ModelRouter maps tiers to concrete model ids. */
-export type ModelTier = 'fast' | 'default' | 'strong';
+/**
+ * Model selection hint; the ModelRouter maps tiers to concrete model ids
+ * (see src/agents/modelRouter.ts). `no_llm` roles run deterministically and
+ * must never consume a model request.
+ */
+export type ModelTier = 'fast' | 'coding' | 'reasoning' | 'review' | 'no_llm';
 
 export interface AgentSpec {
   role: AgentRole;

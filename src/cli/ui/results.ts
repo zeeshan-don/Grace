@@ -89,7 +89,7 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
   }
 
   parts.push(section('Provider'));
-  const served = runtime.provider instanceof RemoteProvider ? runtime.provider.serverProvider : null;
+  const served = runtime.provider instanceof RemoteProvider ? (runtime.provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
   const providerLabel = served?.label ?? runtime.provider?.label ?? 'unknown';
   const model = runtime.provider?.getModel().id ?? '—';
   parts.push(`  ${th.provider(providerLabel)} ${sym.bullet} ${th.model(model)}`);

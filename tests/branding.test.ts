@@ -1,0 +1,45 @@
+/**
+ * GRACE branding + default-model tests.
+ *
+ * The CLI is user-facing GRACE (inspired by Grace Hopper) — never ZEESH AI.
+ * And because NVIDIA is the primary provider, the default model must be a
+ * NVIDIA-served model, not a Groq-only one.
+ */
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { renderBanner } from '../src/cli/banner.ts';
+import { DEFAULT_MODELS } from '../src/config/config.ts';
+import { DEFAULT_NVIDIA_MODEL } from '../src/providers/nvidia.ts';
+import { DISPLAY_NAME, PRODUCT, TAGLINE, VERSION } from '../src/meta.ts';
+
+test('meta: GRACE identity (product, display name, tagline)', () => {
+  assert.equal(PRODUCT, 'grace');
+  assert.equal(DISPLAY_NAME, 'GRACE');
+  assert.equal(TAGLINE, 'AI Coding Agent');
+  assert.equal(VERSION, '0.1.0');
+  assert.ok(!/zeesh/i.test(`${DISPLAY_NAME} ${TAGLINE}`), 'no ZEESH branding in the product identity');
+});
+
+test('banner: renders GRACE with provider/model and no ZEESH branding', () => {
+  const out = renderBanner({
+    directory: 'D:\\work\\app',
+    provider: 'NVIDIA NIM',
+    model: 'qwen/qwen2.5-coder-32b-instruct',
+    session: 'logged in as dev@example.com',
+    freePlan: 'Quota · 5 sessions remaining',
+  });
+  assert.match(out, /GRACE/);
+  assert.match(out, /GRACE · AI Coding Agent · v0\.1\.0/);
+  assert.match(out, /NVIDIA NIM/);
+  assert.match(out, /qwen\/qwen2\.5-coder-32b-instruct/);
+  assert.match(out, /Quota/);
+  assert.ok(!/ZEESH/i.test(out), 'no ZEESH branding in the banner');
+});
+
+test('default model is NVIDIA-first, not a Groq-only model', () => {
+  assert.equal(DEFAULT_MODELS[0], DEFAULT_NVIDIA_MODEL, 'the default model is NVIDIA-served qwen2.5-coder');
+  assert.ok(
+    !DEFAULT_MODELS[0]!.startsWith('openai/') && !DEFAULT_MODELS[0]!.startsWith('llama-'),
+    'the default is not a Groq-only id',
+  );
+});

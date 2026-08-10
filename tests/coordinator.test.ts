@@ -221,12 +221,12 @@ test('coordinator: per-agent crash recovery — an unexpected throw does not abo
 
 test('coordinator: bounded review→fix loop re-runs the editor and re-verifies once', async () => {
   const root = tempProject();
+  // The test runner is deterministic (NO_LLM) — only the editor and reviewer
+  // consume model requests.
   const provider = new FakeProvider([
     { content: '{"summary":"implemented v1","files":[]}' },
-    { content: '{"summary":"3 tests passed","files":[]}' },
     { content: '{"summary":"reviewed","files":[],"recommendations":["fix X"]}' },
     { content: '{"summary":"implemented v2, fixed X","files":[]}' },
-    { content: '{"summary":"3 tests passed again","files":[]}' },
   ]);
   const runtime = makeRuntime(root, provider);
   const coordinator = new Coordinator({
@@ -238,10 +238,42 @@ test('coordinator: bounded review→fix loop re-runs the editor and re-verifies 
   });
   const out = await coordinator.run('implement the feature');
 
-  assert.equal(provider.callCount, 5, 'editor(1) + verify(2) + fix editor(1) + re-verify(1)');
+  assert.equal(provider.callCount, 3, 'editor(1) + reviewer(1) + fix editor(1); test-runner is deterministic');
   const editors = out.results.filter((r) => r.agent === 'editor');
   assert.equal(editors.length, 2, 'one fix pass after the review');
+  const testerRuns = out.results.filter((r) => r.agent === 'test-runner');
+  assert.equal(testerRuns.length, 2, 'test-runner verified both before and after the fix (no LLM)');
+  assert.ok(testerRuns.every((r) => r.status === 'skipped'), 'bare temp dir: no test framework, nothing run');
   assert.ok(out.finalAnswer.includes('implemented v2'), 'the fixed run supersedes the first attempt');
+});
+
+test('coordinator: test-runner executes tests deterministically without an LLM', async () => {
+  const root = tempProject();
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x', scripts: { test: 'node --test test.js' } }));
+  writeFileSync(join(root, 'test.js'), "const { test } = require('node:test');\ntest('ok', () => {});\n");
+  const provider = new FakeProvider(); // no script — no model call may happen
+  const runtime = makeRuntime(root, provider);
+  const coordinator = new Coordinator({ runtime, planner: plan([{ agents: ['test-runner'] }]) });
+  const out = await coordinator.run('run the tests');
+
+  assert.equal(provider.callCount, 0, 'the deterministic test runner never calls the model');
+  const tester = out.results.find((r) => r.agent === 'test-runner');
+  assert.ok(tester, 'a test-runner result exists');
+  assert.equal(tester!.status, 'completed', 'the real test command ran and passed');
+  assert.equal(tester!.iterations, 0);
+  assert.equal(tester!.toolCalls, 0);
+});
+
+test('coordinator: test-runner without a test framework reports skipped, no LLM', async () => {
+  const root = tempProject(); // empty dir — no framework detected
+  const provider = new FakeProvider();
+  const runtime = makeRuntime(root, provider);
+  const coordinator = new Coordinator({ runtime, planner: plan([{ agents: ['test-runner'] }]) });
+  const out = await coordinator.run('run the tests');
+
+  assert.equal(provider.callCount, 0, 'no model request for a framework-less test run');
+  assert.equal(out.results[0]?.status, 'skipped');
+  assert.match(out.results[0]?.summary ?? '', /No test framework detected/);
 });
 
 test('coordinator: no fix loop when the reviewer has nothing to fix', async () => {

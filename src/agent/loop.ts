@@ -140,50 +140,66 @@ export class AgentLoop {
     }));
   }
 
-  /** Stream one model turn, collecting content and tool-call deltas. */
+  /**
+   * Stream one model turn, collecting content and tool-call deltas.
+   *
+   * Rate-limit / too-large rejections are retried with a short exponential
+   * backoff (bounded). This happens strictly at the model-request boundary:
+   * the turn's tools have NOT executed yet, so a retry can never duplicate
+   * tool work. Any other failure surfaces immediately.
+   */
   private async runTurn(
     messages: ChatMessage[],
     toolDefs: ToolDefinition[],
   ): Promise<{ content: string; toolCalls: ToolCallParam[]; streamUsage?: Usage; error?: string }> {
     const { provider, onStream } = this.ctx;
-    let content = '';
-    const acc = new Map<number, ToolCallAccumulator>();
-    let usage: Usage | undefined;
+    const MAX_TURN_ATTEMPTS = 3;
+    const BACKOFF_MS = [0, 1_500, 3_000];
+    let lastError = '';
 
-    try {
-      const events = provider.streamChat(messages, { tools: toolDefs, temperature: 0.2 });
-      for await (const event of events) {
-        if (event.type === 'content') {
-          content += event.content;
-          onStream?.(event.content);
-        } else if (event.type === 'tool_call_delta') {
-          const cur = acc.get(event.index) ?? { index: event.index, arguments: '' };
-          if (event.id) cur.id = event.id;
-          if (event.name) cur.name = event.name;
-          if (event.argumentsDelta) cur.arguments += event.argumentsDelta;
-          acc.set(event.index, cur);
-        } else if (event.type === 'done') {
-          if (event.usage) usage = event.usage;
+    for (let attempt = 0; attempt < MAX_TURN_ATTEMPTS; attempt += 1) {
+      let content = '';
+      const acc = new Map<number, ToolCallAccumulator>();
+      let usage: Usage | undefined;
+      try {
+        const events = provider.streamChat(messages, { tools: toolDefs, temperature: 0.2 });
+        for await (const event of events) {
+          if (event.type === 'content') {
+            content += event.content;
+            onStream?.(event.content);
+          } else if (event.type === 'tool_call_delta') {
+            const cur = acc.get(event.index) ?? { index: event.index, arguments: '' };
+            if (event.id) cur.id = event.id;
+            if (event.name) cur.name = event.name;
+            if (event.argumentsDelta) cur.arguments += event.argumentsDelta;
+            acc.set(event.index, cur);
+          } else if (event.type === 'done') {
+            if (event.usage) usage = event.usage;
+          }
         }
+        const toolCalls: ToolCallParam[] = [...acc.values()]
+          .sort((a, b) => a.index - b.index)
+          .map((a) => ({
+            id: a.id ?? `call_${a.index}`,
+            name: a.name ?? 'unknown',
+            arguments: a.arguments || '{}',
+          }));
+        return { content, toolCalls, streamUsage: usage };
+      } catch (err) {
+        lastError = (err as Error).message ?? String(err);
+        const rateLimited = /rate.?limit|TPM|too large|429|413/i.test(lastError);
+        const isLastAttempt = attempt >= MAX_TURN_ATTEMPTS - 1;
+        if (!rateLimited || isLastAttempt) {
+          const hint = rateLimited
+            ? '\n\nThe provider rate limit was hit or the request was too large. The router tries a fallback provider automatically; you can also wait a moment and retry, or use /model to pick a smaller/faster model.'
+            : '';
+          return { content, toolCalls: [], error: lastError + hint };
+        }
+        const delay = (BACKOFF_MS[attempt] as number) ?? 1_000;
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       }
-    } catch (err) {
-      const message = (err as Error).message ?? String(err);
-      const rateLimited = /rate.?limit|TPM|too large|429|413/i.test(message);
-      const hint = rateLimited
-        ? '\n\nThe provider rate limit was hit (your Groq plan caps tokens/minute). Try /model to pick a smaller/faster model, wait a moment, and retry.'
-        : '';
-      return { content, toolCalls: [], error: message + hint };
     }
-
-    const toolCalls: ToolCallParam[] = [...acc.values()]
-      .sort((a, b) => a.index - b.index)
-      .map((a) => ({
-        id: a.id ?? `call_${a.index}`,
-        name: a.name ?? 'unknown',
-        arguments: a.arguments || '{}',
-      }));
-
-    return { content, toolCalls, streamUsage: usage };
+    return { content: '', toolCalls: [], error: lastError };
   }
 
   private async executeTool(call: ToolCallParam, messages: ChatMessage[]): Promise<void> {

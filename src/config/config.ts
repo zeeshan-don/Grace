@@ -3,17 +3,21 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
 
-/** Default model candidates tried in order when the configured model is unavailable. */
+/**
+ * Default model candidates (NVIDIA-first — GRACE's primary provider). The
+ * router still picks per-role models from the tier tables; this list is the
+ * "user preferred" default shown in /model list.
+ */
 export const DEFAULT_MODELS = [
+  'qwen/qwen2.5-coder-32b-instruct',
   'openai/gpt-oss-120b',
-  'qwen/qwen3.6-27b',
   'llama-3.3-70b-versatile',
 ] as const;
 
 export interface AppConfig {
-  /** Provider id — only "groq" is implemented so far (extension point for more). */
+  /** Provider id the user prefers (e.g. 'groq' | 'nvidia'). */
   provider?: string;
-  /** Selected model id. */
+  /** The user's preferred model id (the router resolves per role from here). */
   model?: string;
 }
 

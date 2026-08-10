@@ -109,7 +109,7 @@ function usage(): string {
     '  grace whoami                     Show the authenticated identity',
     '',
     'Options:',
-    '  --model <id>     Override the model (e.g. openai/gpt-oss-120b)',
+    '  --model <id>     Override the model (e.g. qwen/qwen2.5-coder-32b-instruct)',
     '  --yes, -y        Auto-approve flagged commands (dangerous!)',
     '  --verbose        Show verbose diagnostics (raw output, agent details)',
     '  --help, -h       Show this help',

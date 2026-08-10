@@ -69,7 +69,7 @@ export function sessionRolloverNote(state: DailySessionState | null | undefined)
 }
 
 /**
- * Short banner row: "Free plan: 2/6 sessions · 41m left" or a simpler
+ * Short banner row: "Quota: 5 sessions remaining · 58m left" or a simpler
  * availability line when no session is active yet. '' when unavailable.
  */
 export function bannerFreePlanLine(state: DailySessionState | null | undefined): string {
@@ -77,10 +77,10 @@ export function bannerFreePlanLine(state: DailySessionState | null | undefined):
   const total = state.sessionsUsed + state.sessionsRemaining;
   if (state.currentSession != null && state.sessionExpiresAt) {
     const left = formatCountdown(sessionSecondsLeft(state.sessionExpiresAt));
-    return c.green(`Free plan · Session ${state.currentSession}/${total} · ${left} left · ${formatDailyUsage(state.dailyUsedSeconds)} used today`);
+    return c.green(`Quota · Session ${state.currentSession}/${total} · ${left} left · ${formatDailyUsage(state.dailyUsedSeconds)} used today`);
   }
   if (state.sessionsRemaining === 0) {
-    return c.yellow(`Free plan · all ${total} sessions used today — more at 00:00 UTC`);
+    return c.yellow(`Quota · all ${total} sessions used today — more at 00:00 UTC`);
   }
-  return c.green(`Free plan · ${state.sessionsRemaining} of ${total} sessions available today (${formatDailyUsage(state.dailyLimitSeconds)} max)`);
+  return c.green(`Quota · ${state.sessionsRemaining} sessions remaining today (${formatDailyUsage(state.dailyLimitSeconds)} max)`);
 }

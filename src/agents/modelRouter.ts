@@ -1,49 +1,154 @@
 import type { AgentRole, ModelTier } from './types.ts';
 
+export type { ModelTier } from './types.ts';
+
 /**
- * Model routing (subagent coordinator + server provider router).
+ * Role-based model routing (GRACE Model Router).
  *
- * All agents today run on the same provider/model the user configured, but the
- * coordinator consults a `ModelRouter` per role so cheap/strong split can be
- * wired later (e.g. file-picker → fast model, thinker → strongest model)
- * without touching agent code. No provider-specific logic lives in agents —
- * only a tier hint.
+ * Every agent resolves its provider + model through this router — agents
+ * never select providers directly. The coordinator consults it per role
+ * (through the provider factory), and the server (/api/provider) uses the
+ * same tables to build its provider chain.
  *
- * The same abstraction drives the server: the GRACE API's `/api/provider`
- * routes each request through `SERVER_ROUTING_PREFERENCE` (NVIDIA primary,
- * Groq fallback) — see src/api/providers.ts.
+ * Tiers:
+ *   - fast      cheap/quick work (scouts, pickers, researchers, browser)
+ *   - coding    the editor's primary implementation model
+ *   - reasoning deep strategy work (thinker, coordinator planning)
+ *   - review    code review
+ *   - no_llm    roles that must not consume a model request (test runner)
+ *
+ * Provider policy: NVIDIA is primary for coding/reasoning/review; Groq is
+ * primary for fast tasks (and the automatic fallback for everything else).
+ * This is the single place where role → tier → provider → model is decided.
  */
+
 export interface ModelRoute {
   /** Provider id the request should be sent to (e.g. 'nvidia' | 'groq'). */
   provider: string;
   /** Concrete model id on that provider. */
   model: string;
+  /** Role the route was resolved for ('coordinator' for the planner). */
+  role: string;
+  tier: ModelTier;
 }
 
 export interface ModelRouter {
   /**
    * Resolve the provider + model for a role/tier. `fallback` is the runtime's
-   * configured model — the default keeps every role on it.
+   * configured (user-preferred) model.
    */
   resolve(role: AgentRole, tier: ModelTier, fallback: string): ModelRoute;
 }
 
+export const MODEL_TIERS: readonly ModelTier[] = ['fast', 'coding', 'reasoning', 'review', 'no_llm'];
+
 /**
- * Default router: every role uses the runtime's model. `ZEESH_AGENT_MODEL`
- * overrides all roles for testing/diagnostics; `ZEESH_PROVIDER` overrides the
- * provider id the same way (server operators may prefer 'nvidia').
+ * Role → tier mapping (single source of truth):
+ *
+ *   project-scout -> FAST        file-picker -> FAST
+ *   researcher    -> FAST        browser     -> FAST
+ *   editor        -> CODING      thinker     -> REASONING
+ *   code-reviewer -> REVIEW      coordinator -> REASONING
+ *   test-runner   -> NO_LLM
+ */
+export const ROLE_TIERS: Record<AgentRole, ModelTier> = {
+  'project-scout': 'fast',
+  'file-picker': 'fast',
+  researcher: 'fast',
+  'test-runner': 'no_llm',
+  'shell-runner': 'fast',
+  'git-curator': 'fast',
+  'browser-use': 'fast',
+  thinker: 'reasoning',
+  editor: 'coding',
+  'code-reviewer': 'review',
+};
+
+/** The coordinator's own planning call uses the REASONING tier. */
+export const COORDINATOR_TIER: ModelTier = 'reasoning';
+
+/**
+ * Per-provider model tables, ordered best-first. Only models actually served
+ * by the provider are listed (NVIDIA: qwen2.5-coder + deepseek-r1 catalog
+ * entries; Groq: documented Groq ids). The server additionally verifies
+ * against the live provider catalog when a model is not on this list.
+ */
+export const TIER_MODELS: Record<string, Record<ModelTier, readonly string[]>> = {
+  nvidia: {
+    fast: ['qwen/qwen2.5-coder-32b-instruct'],
+    coding: ['qwen/qwen2.5-coder-32b-instruct', 'deepseek-ai/deepseek-r1'],
+    reasoning: ['deepseek-ai/deepseek-r1', 'qwen/qwen2.5-coder-32b-instruct'],
+    review: ['qwen/qwen2.5-coder-32b-instruct', 'deepseek-ai/deepseek-r1'],
+    no_llm: [],
+  },
+  groq: {
+    // FAST uses gpt-oss-20b: lighter/faster than the 120b coding model with
+    // the same generous TPM budget — 8b-instant's free-tier TPM is too small
+    // for parallel fast agents (their bursts trip the 413/TPM limit).
+    fast: ['openai/gpt-oss-20b', 'llama-3.3-70b-versatile'],
+    coding: ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b', 'llama-3.3-70b-versatile'],
+    reasoning: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
+    review: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],
+    no_llm: [],
+  },
+};
+
+/** All model ids the tables know for a provider (deduped). */
+export function allKnownModels(provider: string): string[] {
+  const byTier = TIER_MODELS[provider];
+  if (!byTier) return [];
+  return [...new Set(MODEL_TIERS.flatMap((t) => byTier[t] ?? []))];
+}
+
+/** True when `model` is a documented id for `provider`. */
+export function isKnownModel(provider: string, model: string): boolean {
+  return allKnownModels(provider).includes(model);
+}
+
+/** Preferred provider per tier: NVIDIA primary; Groq for fast tasks. */
+export function defaultProviderForTier(tier: ModelTier): string {
+  return tier === 'fast' ? 'groq' : 'nvidia';
+}
+
+/** The tier for a role (see ROLE_TIERS). */
+export function tierForRole(role: AgentRole): ModelTier {
+  return ROLE_TIERS[role] ?? 'fast';
+}
+
+/**
+ * Pick the concrete model for a provider + tier. The user's explicitly
+ * preferred model is honored ONLY for the coding tier (their primary model);
+ * every other tier uses its own table so cheap/strong splits stay intact.
+ * Never returns a model the provider does not serve.
+ */
+export function pickModelForProvider(provider: string, tier: ModelTier, preferred?: string): string {
+  const list = TIER_MODELS[provider]?.[tier] ?? [];
+  if (tier === 'coding' && preferred && isKnownModel(provider, preferred)) return preferred;
+  return (list[0] ?? preferred ?? '');
+}
+
+/**
+ * Default router. `ZEESH_AGENT_MODEL` overrides the preferred model for
+ * diagnostics; `ZEESH_PROVIDER` overrides the provider id the same way.
  */
 export const DEFAULT_MODEL_ROUTER: ModelRouter = {
-  resolve: (_role, _tier, fallback) => ({
-    provider: process.env.ZEESH_PROVIDER?.trim() || 'groq',
-    model: process.env.ZEESH_AGENT_MODEL?.trim() || fallback,
-  }),
+  resolve(role, tier, fallback) {
+    const resolvedTier = tier ?? tierForRole(role);
+    if (resolvedTier === 'no_llm') return { provider: 'none', model: '', role, tier: resolvedTier };
+    const provider = process.env.ZEESH_PROVIDER?.trim() || defaultProviderForTier(resolvedTier);
+    const preferred = process.env.ZEESH_AGENT_MODEL?.trim() || fallback;
+    return { provider, model: pickModelForProvider(provider, resolvedTier, preferred), role, tier: resolvedTier };
+  },
 };
 
 /**
- * Server-side routing preference for the GRACE API's provider proxy (the
- * "Model Router"): providers are tried in this order, each only when its
- * server-side API key is configured. NVIDIA is primary; Groq is the automatic
- * fallback for the same request (see FallbackProvider).
+ * Server-side provider order per tier (the "Model Router" chain). NVIDIA is
+ * the primary provider for coding/reasoning/review; fast tasks lead with
+ * Groq so cheap quick work does not consume the NVIDIA/NIM budget.
  */
 export const SERVER_ROUTING_PREFERENCE: readonly string[] = ['nvidia', 'groq'];
+export const FAST_ROUTING_PREFERENCE: readonly string[] = ['groq', 'nvidia'];
+
+export function serverRoutingPreference(tier?: ModelTier): readonly string[] {
+  return tier === 'fast' ? FAST_ROUTING_PREFERENCE : SERVER_ROUTING_PREFERENCE;
+}

@@ -11,7 +11,7 @@ import { renderHelp } from './banner.ts';
 import { c } from './colors.ts';
 import { formatCountdown, formatDailyUsage, sessionSecondsLeft } from './freePlan.ts';
 import { collapseLines, outputCountLine, renderModelPanel, renderStatusPanel, type StatusPanelInfo } from './ui/results.ts';
-import { symbols, theme } from './ui/theme.ts';
+import { theme } from './ui/theme.ts';
 import { isVerbose } from './verbose.ts';
 
 export async function cmdHelp(): Promise<void> {
@@ -35,7 +35,7 @@ export async function cmdModel(runtime: Runtime, arg: string): Promise<void> {
   if (argTrim === '') {
     // When logged in, the backend reports which provider actually served the
     // last request (e.g. NVIDIA NIM after router fallback) — never a key.
-    const served = provider instanceof RemoteProvider ? provider.serverProvider : null;
+    const served = provider instanceof RemoteProvider ? (provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
     console.log(renderModelPanel({
       providerAvailable: true,
       providerLabel: served?.label ?? provider.label,
@@ -76,7 +76,7 @@ export async function cmdStatus(runtime: Runtime): Promise<void> {
   const provider = runtime.provider;
   const session = runtime.session;
 
-  const served = provider instanceof RemoteProvider ? provider.serverProvider : null;
+  const served = provider instanceof RemoteProvider ? (provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
   const info: StatusPanelInfo = {
     project: {
       directory: shortPath(runtime.root, homedir()),
@@ -134,19 +134,24 @@ export async function cmdStatus(runtime: Runtime): Promise<void> {
  * best-effort: offline / pre-session backends just print a dim note.
  */
 async function freePlanStatusLines(): Promise<string[]> {
-  const sym = symbols();
   const session = loadSession();
   if (!session) {
     return ['  Not logged in — local/offline mode (no session limits).'];
   }
   try {
-    const state = await new ApiClient(session.apiUrl, 3000).getUsage(session.token);
+    const api = new ApiClient(session.apiUrl, 3000);
+    // Server-authoritative status label (active/expired/ended/none) — the
+    // CLI only renders what the server says; it never enforces.
+    const status = await api.getSessionStatus(session.token);
+    const label = sessionStatusDisplay(status.session.status);
+    const state = status.session;
     const total = state.sessionsUsed + state.sessionsRemaining;
     const lines = [
+      `  Status:       ${label}`,
       `  Sessions:     ${state.sessionsUsed} / ${total} used today`,
       `  Daily usage:  ${formatDailyUsage(state.dailyUsedSeconds)} / ${formatDailyUsage(state.dailyLimitSeconds)}`,
     ];
-    const left = sessionSecondsLeft(state.sessionExpiresAt);
+    const left = sessionSecondsLeft(state.expires_at ?? state.sessionExpiresAt);
     lines.push(
       left !== null
         ? `  Time left:    ${formatCountdown(left)} (session ${state.currentSession ?? '—'})`
@@ -158,6 +163,34 @@ async function freePlanStatusLines(): Promise<string[]> {
     return lines;
   } catch {
     return [`  ${c.dim(`Could not reach the backend (offline) — server enforces limits.`)}`];
+  }
+}
+
+/**
+ * Render the server's session status label with a state-appropriate color.
+ * Unknown states are rendered dim rather than crashing — the CLI must keep
+ * working even when the server adds new states. Exported for tests.
+ */
+export function sessionStatusDisplay(status: string): string {
+  switch (status) {
+    case 'active':
+      return c.green('active');
+    case 'expired':
+      return c.yellow('expired — the next request starts a fresh session');
+    case 'ended':
+      return c.yellow('ended — the next request starts a fresh session');
+    case 'none':
+      return c.dim('no session yet — the first request starts one');
+    case 'rate_limited':
+      return c.red('rate limited by the server');
+    case 'model_unavailable':
+      return c.red('model unavailable — the server will fall back');
+    case 'banned':
+      return c.red('account disabled');
+    case 'unauthorized':
+      return c.red('session invalid — run grace login');
+    default:
+      return c.dim(status);
   }
 }
 

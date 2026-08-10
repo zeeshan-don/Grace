@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
 import { NO_PROVIDER_MESSAGE, resolveProvider } from '../src/runtime.ts';
 import { GroqProvider } from '../src/providers/groq.ts';
-import { RemoteProvider, RemoteProviderError } from '../src/providers/remote.ts';
+import { RemoteProvider, RemoteProviderError, resetSharedRemoteState } from '../src/providers/remote.ts';
 import type { ChatMessage, ToolCallParam, ToolDefinition, Usage } from '../src/providers/types.ts';
 import type { StoredSession } from '../src/auth/session.ts';
 
@@ -115,6 +115,60 @@ test('RemoteProvider.chat sends the session token + payload and maps the respons
   assert.equal(body.model, 'm-1');
   assert.equal(body.temperature, 0.5);
   assert.deepEqual(body.tools, [toolDef]);
+});
+
+test('RemoteProvider sends the role tier hint with each request', async () => {
+  const mock = await startMock(() => ({ status: 200, body: { content: 'ok' } }));
+  const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok', model: 'm-1', tier: 'coding' });
+  await provider.chat(msgs);
+  const req = mock.requests[0];
+  assert.ok(req, 'one request captured');
+  const body = req.body as { model: string; tier?: string };
+  assert.equal(body.model, 'm-1');
+  assert.equal(body.tier, 'coding', 'tier rides along so the server routes + verifies per role');
+});
+
+test('RemoteProvider.withModel clones the provider for a different role route', async () => {
+  const mock = await startMock(() => ({ status: 200, body: { content: 'ok' } }));
+  const base = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok', model: 'm-1' });
+  const routed = base.withModel('deepseek-ai/deepseek-r1', 'reasoning');
+  assert.equal(routed.getModel().id, 'deepseek-ai/deepseek-r1');
+  assert.equal(routed.modelTier, 'reasoning');
+  await routed.chat(msgs);
+  const body = mock.requests[0]?.body as { model: string; tier?: string };
+  assert.equal(body.model, 'deepseek-ai/deepseek-r1');
+  assert.equal(body.tier, 'reasoning');
+});
+
+test('RemoteProvider shares the freshest session/provider state across instances (role routing)', async () => {
+  resetSharedRemoteState();
+  const mock = await startMock(() => ({
+    status: 200,
+    body: {
+      content: 'ok',
+      provider_id: 'nvidia',
+      provider_label: 'NVIDIA NIM',
+      session: {
+        sessionsUsed: 2,
+        sessionsRemaining: 4,
+        currentSession: 2,
+        sessionStartedAt: '2026-08-10T09:00:00.000Z',
+        sessionExpiresAt: '2026-08-10T10:00:00.000Z',
+        dailyUsedSeconds: 3600,
+        dailyLimitSeconds: 21600,
+      },
+    },
+  }));
+  const editor = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok', model: 'm1', tier: 'coding' });
+  const scout = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok', model: 'm2', tier: 'fast' });
+  await editor.chat(msgs); // only the editor instance talked
+
+  // The CLI reads the shared view regardless of which instance served.
+  assert.equal(RemoteProvider.sharedSession()?.currentSession, 2);
+  assert.deepEqual(RemoteProvider.sharedServerProvider(), { id: 'nvidia', label: 'NVIDIA NIM' });
+  // Instance-scoped getters stay untouched (only the instance that talked has state).
+  assert.equal(editor.lastSession?.currentSession, 2);
+  assert.equal(scout.lastSession, null);
 });
 
 test('RemoteProvider.chat tolerates missing optional fields in the response', async () => {

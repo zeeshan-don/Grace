@@ -223,7 +223,11 @@ export function createMemoryDb(): MemoryDb {
     if (sql.includes('UPDATE free_sessions')) {
       const id = params[0] as string;
       const row = freeSessions.find((s) => s.id === id);
-      if (row && !row.ended_at) row.ended_at = row.expires_at; // ended_at = expires_at
+      if (row && !row.ended_at) {
+        // Lazy end (markEnded) passes only the id → ended_at = expires_at.
+        // Explicit end (POST /api/session/end) passes the end timestamp as $2.
+        row.ended_at = (params[1] as string | undefined) ?? row.expires_at;
+      }
       return [];
     }
 

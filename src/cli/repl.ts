@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { createInterface as createInterfaceEvents } from 'node:readline';
 import { createInterface as createInterfacePromises } from 'node:readline/promises';
 import { stdin as processStdin, stdout as processStdout, cwd } from 'node:process';
-import { ApiClient } from '../auth/client.ts';
+import { ApiClient, type DailySessionState } from '../auth/client.ts';
 import { loadSession } from '../auth/session.ts';
 import { loadEnv } from '../config/config.ts';
 import { RemoteProvider } from '../providers/remote.ts';
@@ -12,7 +12,7 @@ import { cmdLogin, cmdLogout, cmdRegister, cmdWhoami } from './authCommands.ts';
 import { renderBanner } from './banner.ts';
 import { c } from './colors.ts';
 import { cmdClear, cmdDiff, cmdHelp, cmdModel, cmdStatus, cmdUndo } from './commands.ts';
-import { bannerFreePlanLine } from './freePlan.ts';
+import { bannerFreePlanLine, formatCountdown, sessionSecondsLeft } from './freePlan.ts';
 import { runTask } from './taskRunner.ts';
 import { promptBox } from './ui/box.ts';
 import { theme } from './ui/theme.ts';
@@ -241,17 +241,25 @@ async function printBanner(runtime: Runtime): Promise<void> {
     ? runtime.provider.label
     : c.yellow('not configured — add GROQ_API_KEY to .env or run /login');
   const modelStatus = runtime.provider ? runtime.provider.getModel().id : th.dim('—');
-  const sessionStatus = session
-    ? c.green(`logged in as ${session.user.email} · ${session.apiUrl}`)
-    : c.dim('not logged in — local-only mode (usage tracking off, optional)');
   const freePlan = await loadBannerFreePlan(runtime);
+  const sessionStatus = session
+    ? (() => {
+        // When a free session is active, the Session row shows the time left
+        // (UI only — enforcement stays server-side).
+        const left =
+          freePlan?.currentSession != null && freePlan.sessionExpiresAt
+            ? formatCountdown(sessionSecondsLeft(freePlan.sessionExpiresAt))
+            : null;
+        return c.green(`logged in as ${session.user.email}${left ? ` · ${left} remaining` : ''}`);
+      })()
+    : c.dim('not logged in — local-only mode (usage tracking off, optional)');
   console.log(
     renderBanner({
       directory: shortPath(runtime.root, homedir()),
       provider: providerStatus,
       model: modelStatus,
       session: sessionStatus,
-      freePlan,
+      freePlan: freePlan ? bannerFreePlanLine(freePlan) : undefined,
     }),
   );
   console.log('');
@@ -261,13 +269,12 @@ async function printBanner(runtime: Runtime): Promise<void> {
  * GRACE FREE banner row: fetch the server's daily session state once, briefly.
  * Best-effort only — a slow/unreachable backend never delays or breaks the CLI.
  */
-async function loadBannerFreePlan(runtime: Runtime): Promise<string | undefined> {
+async function loadBannerFreePlan(runtime: Runtime): Promise<DailySessionState | undefined> {
   if (!(runtime.provider instanceof RemoteProvider)) return undefined; // local key / offline
   const session = loadSession();
   if (!session) return undefined;
   try {
-    const state = await new ApiClient(session.apiUrl, 2000).getUsage(session.token);
-    return bannerFreePlanLine(state);
+    return await new ApiClient(session.apiUrl, 2000).getUsage(session.token);
   } catch {
     return undefined; // backend offline / old backend — banner stays as-is
   }

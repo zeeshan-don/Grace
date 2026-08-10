@@ -126,6 +126,50 @@ export class FreeSessionService {
     return this.computeState(rows, now);
   }
 
+  /**
+   * The user's currently ACTIVE session row, or null (read-only — never
+   * starts or ends anything). Used by GET /api/session/status.
+   */
+  async activeSessionRow(userId: string): Promise<FreeSessionRow | null> {
+    const now = this.now();
+    const rows = await this.sessionRows(userId, utcDay(now));
+    const last = rows[rows.length - 1];
+    return last !== undefined && isActive(last, now) ? last : null;
+  }
+
+  /**
+   * The day's most recent session row, or null when the user has no session
+   * yet today (read-only). Lets the status endpoint distinguish an explicitly
+   * ended session (ended_at < expires_at) from one that expired naturally
+   * (ended_at == expires_at) and from no session at all.
+   */
+  async lastSessionRow(userId: string): Promise<FreeSessionRow | null> {
+    const rows = await this.sessionRows(userId, utcDay(this.now()));
+    return rows[rows.length - 1] ?? null;
+  }
+
+  /**
+   * Explicitly end the user's active session (POST /api/session/end).
+   * Marks the active row ended now; never starts a replacement — ending is an
+   * explicit action, quota stays as-is. Idempotent: no active session is a
+   * no-op (the expired row is lazily marked ended).
+   */
+  async endActiveSession(userId: string): Promise<DailySessionState> {
+    const now = this.now();
+    const day = utcDay(now);
+    const rows = await this.sessionRows(userId, day);
+    const last = rows[rows.length - 1];
+    if (last !== undefined) {
+      if (isActive(last, now)) {
+        await this.db('UPDATE free_sessions SET ended_at = $2 WHERE id = $1 AND ended_at IS NULL', [last.id, now.toISOString()]);
+      } else {
+        await this.markEnded(last); // lazy end of an already-expired session
+      }
+    }
+    const after = await this.sessionRows(userId, day);
+    return this.computeState(after, now);
+  }
+
   /** Authoritative gate for /api/provider (may auto-start the next session). */
   async ensureActiveSession(userId: string): Promise<SessionGate> {
     const now = this.now();
@@ -252,10 +296,15 @@ export class FreeSessionService {
   }
 }
 
-/** A session is active while now < expires_at. */
+/**
+ * A session is active while now < expires_at AND it was not ended early
+ * (POST /api/session/end sets ended_at — an explicitly ended session is never
+ * reused, even while its expiry is still in the future).
+ */
 function isActive(row: FreeSessionRow, now: Date): boolean {
   const expiresAt = new Date(row.expires_at).getTime();
-  return !Number.isNaN(expiresAt) && expiresAt > now.getTime();
+  const endedAt = row.ended_at ? new Date(row.ended_at).getTime() : Infinity;
+  return !Number.isNaN(expiresAt) && expiresAt > now.getTime() && endedAt > now.getTime();
 }
 
 /** Postgres UNIQUE violation (SQLSTATE 23505). The memory test db mirrors it. */

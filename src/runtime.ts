@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 import { clearSession, loadSession, sessionExpired, type StoredSession } from './auth/session.ts';
 import { groqApiKey, loadAppConfig, resolveModel } from './config/config.ts';
+import { isKnownModel, pickModelForProvider } from './agents/modelRouter.ts';
 import { createProvider } from './providers/registry.ts';
 import { RemoteProvider } from './providers/remote.ts';
 import type { AIProvider } from './providers/types.ts';
@@ -54,7 +55,13 @@ export function resolveProvider(
 ): ProviderResolution {
   if (key) {
     try {
-      return { provider: createProvider('groq', { apiKey: key, model }), error: null };
+      // The local Groq path only ever serves Groq models: a documented
+      // NVIDIA-only id (e.g. the new NVIDIA-first default) is substituted with
+      // the Groq coding default so a local key never targets an unserved
+      // model. Unknown/custom ids are passed through (the provider validates).
+      const localModel =
+        isKnownModel('groq', model) || !isKnownModel('nvidia', model) ? model : pickModelForProvider('groq', 'coding');
+      return { provider: createProvider('groq', { apiKey: key, model: localModel }), error: null };
     } catch (err) {
       return { provider: null, error: (err as Error).message };
     }

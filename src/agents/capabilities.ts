@@ -41,7 +41,7 @@ export function capabilitiesAreReadOnly(capabilities: Capability[]): boolean {
 }
 
 /** Commands the test runner may run without asking the user. */
-const TEST_PREFIXES = [
+export const TEST_PREFIXES = [
   'npm test', 'npm run test', 'npm run typecheck', 'npm run build', 'npm run lint', 'npm run smoke',
   'pnpm test', 'pnpm run test', 'pnpm run typecheck', 'pnpm run build', 'pnpm run lint',
   'yarn test', 'yarn run test', 'yarn typecheck', 'yarn build', 'yarn lint',

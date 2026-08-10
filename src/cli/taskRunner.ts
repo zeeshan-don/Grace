@@ -1,4 +1,5 @@
 import { Coordinator } from '../agents/coordinator.ts';
+import { RoleModelRouter } from '../agents/roleRouter.ts';
 import type { CoordinatorRunResult } from '../agents/types.ts';
 import { reportRunUsage } from '../auth/reporting.ts';
 import { ProjectIndexService } from '../project/index.ts';
@@ -43,7 +44,17 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
   console.log('');
   const startedAt = Date.now();
   const progress = new ProgressRenderer({ verbose: opts.verbose ?? isVerbose() });
-  const coordinator = new Coordinator({ runtime, projectIndex: index, onEvent: (e) => progress.event(e) });
+  // Genuine role-based routing: every subagent resolves its own provider +
+  // model through the Model Router (fast/coding/reasoning/review tiers). The
+  // coordinator's own planning call uses the REASONING tier.
+  const roleRouter = new RoleModelRouter(runtime);
+  const coordinator = new Coordinator({
+    runtime,
+    projectIndex: index,
+    onEvent: (e) => progress.event(e),
+    providerFactory: (role, spec) => roleRouter.providerFor(role, spec),
+    plannerProvider: roleRouter.plannerProvider(),
+  });
 
   let result: CoordinatorRunResult;
   try {
@@ -63,12 +74,11 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
 
   console.log(renderTaskResult({ result, runtime, executionTimeMs, verbose: opts.verbose ?? isVerbose() }));
 
-  // GRACE FREE: daily session quota from the server's last response. With the
-  // default provider factory every agent shares runtime.provider, so the most
-  // recent response (possibly the reviewer in a parallel final step) is always
-  // the freshest server-authoritative state.
+  // GRACE FREE: daily session quota from the server's last response. Role
+  // routing creates one RemoteProvider per agent tier, so the freshest state
+  // is the shared view across all instances of this run.
   if (runtime.provider instanceof RemoteProvider) {
-    const last = runtime.provider.lastSession;
+    const last = RemoteProvider.sharedSession();
     if (last) {
       const line = sessionStatusLine(last);
       if (line) console.log(line);

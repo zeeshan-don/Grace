@@ -9,6 +9,7 @@ import { compactResults, compactText } from './compact.ts';
 import { llmPlanner, ruleBasedPlanner, normalizePlan } from './planner.ts';
 import { AGENT_SPECS, ALL_AGENT_ROLES } from './specs.ts';
 import { runSubagent } from './subagent.ts';
+import { runDeterministicTestRunner } from './testRunner.ts';
 import type {
   AgentRole,
   AgentSpec,
@@ -24,9 +25,12 @@ export interface CoordinatorDeps {
   /**
    * Per-role provider factory (model routing extension point). Defaults to
    * sharing the runtime provider, so every agent uses the user's configured
-   * model. Return null to fall back to the runtime provider.
+   * model. Return null to fall back to the runtime provider. NO_LLM roles
+   * are handled deterministically and never reach this factory.
    */
   providerFactory?: (role: AgentRole, spec: AgentSpec) => AIProvider | null;
+  /** Provider for the coordinator's own planning call (REASONING tier). */
+  plannerProvider?: AIProvider | null;
   /** Replaceable planner (tests inject scripted plans). */
   planner?: Planner;
   /** Progress events for the CLI (never chain-of-thought). */
@@ -86,7 +90,7 @@ export class Coordinator {
     const unavailable: AgentRole[] = browser.available ? [] : ['browser-use'];
     const available = ALL_AGENT_ROLES.filter((r) => !unavailable.includes(r));
 
-    const planner = this.deps.planner ?? llmPlanner(runtime.provider);
+    const planner = this.deps.planner ?? llmPlanner(this.deps.plannerProvider ?? runtime.provider);
     const plannerInput = { task, indexSummary: index.summary, availableAgents: available, unavailableAgents: unavailable };
     let plan: AgentPlan;
     try {
@@ -227,6 +231,12 @@ export class Coordinator {
       return this.fail(spec, 'Permission boundary violation: read-only role granted mutating tools.');
     }
 
+    // NO_LLM roles (e.g. the test runner) run deterministically — no model
+    // request is consumed and no provider is built.
+    if (spec.modelTier === 'no_llm') {
+      return this.runNoLlm(role, spec);
+    }
+
     try {
       const provider = this.deps.providerFactory ? (this.deps.providerFactory(role, spec) ?? runtime.provider) : runtime.provider;
       if (!provider) return this.fail(spec, 'No AI provider is configured.');
@@ -268,6 +278,29 @@ export class Coordinator {
       // Per-agent recovery: an unexpected crash must never abort the run.
       return this.fail(spec, `Agent crashed: ${(err as Error).message ?? String(err)}`);
     }
+  }
+
+  /**
+   * Deterministic execution for NO_LLM roles. Today only the test runner has
+   * one; unknown roles fail cleanly instead of silently doing nothing.
+   */
+  private async runNoLlm(role: AgentRole, spec: AgentSpec): Promise<SubagentResult> {
+    if (role === 'test-runner') {
+      const result = await runDeterministicTestRunner({
+        projectRoot: this.deps.runtime.root,
+        project: this.deps.runtime.project,
+      });
+      this.deps.onEvent?.({
+        type: 'agent-done',
+        role,
+        label: spec.label,
+        status: result.status,
+        summary: result.summary,
+        error: result.error,
+      });
+      return result;
+    }
+    return this.fail(spec, `Role "${role}" is marked no_llm but has no deterministic executor.`);
   }
 
   private fail(spec: AgentSpec, error: string): SubagentResult {

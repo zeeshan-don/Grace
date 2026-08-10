@@ -6,7 +6,7 @@
  * this router so behavior is identical in both runtimes.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { healthHandler, loginHandler, logoutHandler, meHandler, providerHandler, registerHandler, usageHandler } from './handlers.ts';
+import { endSessionHandler, healthHandler, loginHandler, logoutHandler, meHandler, providerHandler, registerHandler, sessionStatusHandler, usageHandler } from './handlers.ts';
 import { logApiEvent } from './log.ts';
 import { applyCors, withHttp } from './middleware.ts';
 import { HttpError, type ApiHandler, type ApiRequest, type ApiResponse } from './types.ts';
@@ -27,6 +27,8 @@ const ROUTES: Route[] = [
   { method: 'GET', pattern: '/api/auth/me', handler: meHandler, allow: ['GET'] },
   { method: 'ANY', pattern: '/api/usage', handler: usageHandler, allow: ['GET', 'POST'] },
   { method: 'POST', pattern: '/api/provider', handler: providerHandler, allow: ['POST'] },
+  { method: 'GET', pattern: '/api/session/status', handler: sessionStatusHandler, allow: ['GET'] },
+  { method: 'POST', pattern: '/api/session/end', handler: endSessionHandler, allow: ['POST'] },
 ];
 
 /** Find a handler for a method + pathname, or null (→ 404/405). */

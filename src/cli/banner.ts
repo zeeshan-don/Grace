@@ -14,7 +14,8 @@ import { symbols, theme } from './ui/theme.ts';
  *   Directory  D:\Projects\my-app
  *   Provider   NVIDIA NIM
  *   Model      qwen/qwen2.5-coder-32b-instruct
- *   Session    logged in as user@example.com
+ *   Session    logged in as user@example.com · 58m remaining
+ *   Quota      5 sessions remaining
  *   ────────────────────────────────
  */
 
@@ -40,7 +41,7 @@ export function renderBanner(info: BannerInfo): string {
     kv('Model', th.model(info.model)),
     kv('Session', info.session),
   ];
-  if (info.freePlan) rows.push(kv('Free plan', info.freePlan));
+  if (info.freePlan) rows.push(kv('Quota', info.freePlan));
   return [
     `  ${c.bold(c.cyan('GRACE'))}`,
     `  ${c.dim(`${DISPLAY_NAME} · ${TAGLINE} · v${VERSION}`)}`,

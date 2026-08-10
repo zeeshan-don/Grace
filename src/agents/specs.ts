@@ -44,7 +44,7 @@ function spec(
     systemPrompt,
     capabilities: opts.capabilities ?? ['read'],
     readOnly: opts.readOnly ?? true,
-    modelTier: opts.modelTier ?? 'default',
+    modelTier: opts.modelTier ?? 'fast',
     maxIterations: opts.maxIterations ?? 6,
     contextBudget: opts.contextBudget ?? 8_000,
     structured: opts.structured ?? true,
@@ -86,7 +86,7 @@ You receive a problem and relevant findings/files. Produce a concise, concrete i
 - Analyze the problem, identify the root cause or the key design decision, list the exact steps to implement.
 - Call out risks, edge cases and anything the implementer must verify.
 - No code edits, no commands. Do not restate the context; only add value.${STRUCTURED_OUTPUT}`,
-    { modelTier: 'strong', maxIterations: 4, contextBudget: 12_000 },
+    { modelTier: 'reasoning', maxIterations: 4, contextBudget: 12_000 },
   ),
 
   researcher: spec(
@@ -99,7 +99,7 @@ Research the question using external sources (official docs, reference pages).
 - Return concise findings with the exact source URL next to each finding.
 - If sources are contradictory, say so. Never invent APIs or URLs.
 - Do not touch local files beyond the provided context.${STRUCTURED_OUTPUT}`,
-    { capabilities: ['read', 'web'], modelTier: 'default', maxIterations: 6, contextBudget: 10_000 },
+    { capabilities: ['read', 'web'], modelTier: 'fast', maxIterations: 6, contextBudget: 10_000 },
   ),
 
   'code-reviewer': spec(
@@ -112,7 +112,7 @@ Review the changes made for this task (or the relevant files when no diff exists
 - Look specifically for: bugs, regressions, missing requirements, security problems, bad architecture, missing tests.
 - Be specific and actionable; cite file:line where possible. Distinguish blockers from nits.
 - You never modify files and never run commands.${STRUCTURED_OUTPUT}`,
-    { capabilities: ['read', 'diff'], modelTier: 'strong', maxIterations: 8, contextBudget: 12_000 },
+    { capabilities: ['read', 'diff'], modelTier: 'review', maxIterations: 8, contextBudget: 12_000 },
   ),
 
   'test-runner': spec(
@@ -124,7 +124,7 @@ Detect the project's test framework from the provided context, then run only the
 - Approved commands (npm test, npm run typecheck/build/lint, pytest, go test, cargo test, node --test, ...) run without asking; any other command goes to the user for approval.
 - If a test fails, read the failure output and report exactly what failed and why.
 - Do not modify source files. You may only run commands.${STRUCTURED_OUTPUT}`,
-    { capabilities: ['read', 'execute'], readOnly: false, modelTier: 'default', maxIterations: 6, contextBudget: 8_000 },
+    { capabilities: ['read', 'execute'], readOnly: false, modelTier: 'no_llm', maxIterations: 6, contextBudget: 8_000 },
   ),
 
   'shell-runner': spec(
@@ -136,7 +136,7 @@ Execute the shell command(s) needed for the task.
 - Destructive or sensitive commands (rm -rf, sudo, git push, DB drops, ...) require user approval; if denied, report the denial and find a safe alternative. Never bypass the permission prompt.
 - Capture stdout, stderr and exit codes; report failures precisely.
 - Do not modify source files except through explicitly requested commands.${STRUCTURED_OUTPUT}`,
-    { capabilities: ['read', 'execute'], readOnly: false, modelTier: 'default', maxIterations: 4, contextBudget: 6_000 },
+    { capabilities: ['read', 'execute'], readOnly: false, modelTier: 'fast', maxIterations: 4, contextBudget: 6_000 },
   ),
 
   'git-curator': spec(
@@ -149,7 +149,7 @@ Inspect the git state and diff, then handle git operations per the permission po
 - NEVER push to main or make remote changes unless the user explicitly authorized it.
 - Propose a clear, conventional commit message when asked.
 - Do not modify source files.${STRUCTURED_OUTPUT}`,
-    { capabilities: ['read', 'diff', 'execute'], readOnly: false, modelTier: 'default', maxIterations: 6, contextBudget: 8_000 },
+    { capabilities: ['read', 'diff', 'execute'], readOnly: false, modelTier: 'fast', maxIterations: 6, contextBudget: 8_000 },
   ),
 
   'browser-use': spec(
@@ -159,7 +159,7 @@ Inspect the git state and diff, then handle git operations per the permission po
     `You are the Browser agent.
 Verify the target page in a real browser: navigate, click, type, inspect the rendered DOM, capture what you see, and report runtime/browser findings (console errors, layout issues, broken interactions).
 - You depend on a browser automation backend. If none is available, report that the task requires manual browser verification.${STRUCTURED_OUTPUT}`,
-    { capabilities: ['browser'], modelTier: 'default', maxIterations: 4, contextBudget: 6_000 },
+    { capabilities: ['browser'], modelTier: 'fast', maxIterations: 4, contextBudget: 6_000 },
   ),
 
   editor: spec(
@@ -181,7 +181,7 @@ Rules:
     {
       capabilities: ['read', 'write', 'execute'],
       readOnly: false,
-      modelTier: 'default',
+      modelTier: 'coding',
       maxIterations: 30,
       contextBudget: 28_000,
       structured: false,

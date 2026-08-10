@@ -17,8 +17,8 @@ import { betaAccessFor } from './beta.ts';
 import { getDb } from './db.ts';
 import { logApiEvent } from './log.ts';
 import { checkRateLimit, clientIp } from './rateLimit.ts';
-import { runServerChat, type ChatRequest } from './providers.ts';
-import { FreeSessionService, secondsUntilUtcMidnight } from './freeSessions.ts';
+import { describeServerRouter, runServerChat, type ChatRequest } from './providers.ts';
+import { FreeSessionService, secondsUntilUtcMidnight, type DailySessionState, type FreeSessionRow } from './freeSessions.ts';
 import { isObject, methodNotAllowed, type ApiHandler, type ApiRequest, type ApiResponse } from './types.ts';
 import { UsageError, UsageService, type UsageReport } from './usage.ts';
 
@@ -193,6 +193,88 @@ async function listUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
   } catch {
     res.status(500).json({ error: 'Could not load usage.' });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Session status / end (server-authoritative free sessions)
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/session/status — the server-authoritative session state:
+ * status, timestamps, daily quota, and the router's provider/model info.
+ * Read-only: it never starts or ends a session (unlike /api/provider).
+ */
+export const sessionStatusHandler: ApiHandler = async (req, res) => {
+  if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  const auth = await requireSession(req, db);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+  const svc = new FreeSessionService(db);
+  const state = await svc.getState(auth.user.id);
+  const last = await svc.lastSessionRow(auth.user.id);
+  const router = describeServerRouter();
+  res.status(200).json({
+    session: {
+      ...state,
+      id: last?.id ?? null,
+      status: sessionStatusLabel(last, state),
+      started_at: last?.started_at ?? null,
+      expires_at: last?.expires_at ?? null,
+      provider: router.primary,
+      model: router.model,
+      model_router: router.providers,
+    },
+  });
+};
+
+/**
+ * POST /api/session/end — explicitly end the active session. The server is
+ * the only writer: the CLI can only request an end, never fabricate one.
+ * Ending never starts a replacement session.
+ */
+export const endSessionHandler: ApiHandler = async (req, res) => {
+  if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
+  const db = getDb();
+  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  const auth = await requireSession(req, db);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+  const svc = new FreeSessionService(db);
+  const state = await svc.endActiveSession(auth.user.id);
+  const last = await svc.lastSessionRow(auth.user.id);
+  res.status(200).json({
+    session: {
+      ...state,
+      id: last?.id ?? null,
+      status: sessionStatusLabel(last, state),
+      started_at: last?.started_at ?? null,
+      expires_at: last?.expires_at ?? null,
+    },
+  });
+};
+
+/**
+ * Session state label for read-only status:
+ *   - 'active'    a session is live right now,
+ *   - 'ended'     the last session was explicitly ended early
+ *                 (ended_at < expires_at) — never reused,
+ *   - 'expired'   the last session ran out naturally (or was lazy-ended at
+ *                 its expiry),
+ *   - 'none'      no session today.
+ */
+function sessionStatusLabel(last: FreeSessionRow | null, state: DailySessionState): string {
+  if (last !== null && state.currentSession !== null) return 'active';
+  if (last !== null && last.ended_at !== null) {
+    const ended = new Date(last.ended_at).getTime();
+    const expires = new Date(last.expires_at).getTime();
+    // Explicit end marks ended_at = now (< expires_at); natural expiry lazy-ends
+    // with ended_at = expires_at. The memory test db mirrors both.
+    if (Number.isFinite(ended) && Number.isFinite(expires) && ended < expires) return 'ended';
+  }
+  if (state.sessionsUsed > 0) return 'expired';
+  return 'none';
 }
 
 // ---------------------------------------------------------------------------

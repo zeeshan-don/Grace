@@ -28,6 +28,7 @@ import {
 } from '../src/api/freeSessions.ts';
 import { resetRateLimiters } from '../src/api/rateLimit.ts';
 import { createApiServer } from '../src/api/server.ts';
+import { sessionStatusDisplay } from '../src/cli/commands.ts';
 import { bannerFreePlanLine, formatCountdown, sessionRolloverNote, sessionSecondsLeft, sessionStatusLine } from '../src/cli/freePlan.ts';
 import { GroqProvider } from '../src/providers/groq.ts';
 import { createMemoryDb, type MemFreeSession, type MemoryDb } from './helpers/memoryDb.ts';
@@ -110,9 +111,15 @@ function expireAll(mem: MemoryDb, userId: string): MemFreeSession[] {
   return mem.freeSessions.filter((s) => s.user_id === userId);
 }
 
-/** Stub the provider chat so no network/key is needed; GROQ_API_KEY must be set for createServerProvider. */
+/**
+ * Stub the provider chat so no network/key is needed. GROQ_API_KEY must be
+ * set for createServerProvider; NVIDIA_API_KEY is blanked so the real
+ * environment key cannot build a live NVIDIA leg in the router chain.
+ */
 async function withStubbedChat<T>(fn: () => Promise<T>): Promise<T> {
   process.env.GROQ_API_KEY = 'gsk_fake_key_for_tests';
+  const savedNvidia = process.env.NVIDIA_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
   const original = GroqProvider.prototype.chat;
   GroqProvider.prototype.chat = (async () => ({
     content: 'ok',
@@ -123,6 +130,8 @@ async function withStubbedChat<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } finally {
     GroqProvider.prototype.chat = original;
+    if (savedNvidia !== undefined) process.env.NVIDIA_API_KEY = savedNvidia;
+    else delete process.env.NVIDIA_API_KEY;
     delete process.env.GROQ_API_KEY;
   }
 }
@@ -510,6 +519,141 @@ test('concurrent HTTP requests are safe (invariants hold regardless of serializa
   }
 });
 
+test('GET /api/session/status reports the active session + router provider/model', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const { token } = await registerSession(baseUrl, mem);
+    const before = await request(baseUrl, '/api/session/status', { token });
+    assert.equal(before.status, 200);
+    const s0 = before.body.session as Record<string, unknown>;
+    assert.equal(s0.status, 'none');
+    assert.equal(s0.id, null);
+    assert.equal(s0.sessionsUsed, 0);
+    assert.equal(s0.sessionsRemaining, 6);
+
+    await withStubbedChat(async () => {
+      await chat(baseUrl, token); // starts session 1
+    });
+
+    const after = await request(baseUrl, '/api/session/status', { token });
+    assert.equal(after.status, 200);
+    const s1 = after.body.session as Record<string, unknown>;
+    assert.equal(s1.status, 'active');
+    assert.ok(s1.id, 'active session row id present');
+    assert.equal(s1.currentSession, 1);
+    assert.equal(s1.sessionsRemaining, 5);
+    assert.ok(s1.expires_at, 'expiry timestamp present');
+    assert.equal(typeof s1.provider, 'string', 'router primary provider present');
+    assert.equal(typeof s1.model, 'string', 'router model present');
+    assert.equal(s1.status, 'active');
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
+test('GET /api/session/status reports expired after natural expiry, ended after explicit end', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const { token, userId } = await registerSession(baseUrl, mem);
+    await withStubbedChat(async () => {
+      await chat(baseUrl, token); // session 1 active
+
+      // Natural expiry: the session runs out → status is 'expired', not 'ended'.
+      expireAll(mem, userId);
+      const expired = await request(baseUrl, '/api/session/status', { token });
+      assert.equal(expired.status, 200);
+      assert.equal((expired.body.session as Record<string, unknown>).status, 'expired');
+
+      // A fresh session, explicitly ended → status is 'ended'.
+      await chat(baseUrl, token); // starts session 2
+      const ended = await request(baseUrl, '/api/session/end', { method: 'POST', token });
+      assert.equal(ended.status, 200);
+      assert.equal((ended.body.session as Record<string, unknown>).status, 'ended');
+
+      const after = await request(baseUrl, '/api/session/status', { token });
+      assert.equal(after.status, 200);
+      assert.equal(
+        (after.body.session as Record<string, unknown>).status,
+        'ended',
+        'status endpoint distinguishes an explicitly ended session from an expired one',
+      );
+      assert.equal((after.body.session as Record<string, unknown>).currentSession, null);
+    });
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
+test('GET /api/session/status is read-only (never starts a session)', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const { token } = await registerSession(baseUrl, mem);
+    await request(baseUrl, '/api/session/status', { token });
+    await request(baseUrl, '/api/session/status', { token });
+    assert.equal(mem.freeSessions.length, 0, 'status never auto-starts a session');
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
+test('POST /api/session/end ends the active session; the next request starts a fresh one', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const { token, userId } = await registerSession(baseUrl, mem);
+    await withStubbedChat(async () => {
+      await chat(baseUrl, token); // session 1 active
+    });
+    assert.equal(mem.freeSessions.length, 1);
+
+    const ended = await request(baseUrl, '/api/session/end', { method: 'POST', token });
+    assert.equal(ended.status, 200);
+    const s = ended.body.session as Record<string, unknown>;
+    assert.equal(s.status, 'ended');
+    assert.ok(
+      mem.freeSessions.find((x) => x.user_id === userId && x.session_number === 1)?.ended_at,
+      'the active row was marked ended server-side',
+    );
+    assert.equal(mem.freeSessions.length, 1, 'ending never creates a row');
+
+    // The next inference starts the next session — ending is explicit, not a refund.
+    await withStubbedChat(async () => {
+      const r = await chat(baseUrl, token);
+      assert.equal(r.status, 200);
+      const session = (r.body.session ?? {}) as DailySessionState & { startedNew?: boolean };
+      assert.equal(session.currentSession, 2, 'a fresh session starts after an explicit end');
+      assert.equal(session.startedNew, true);
+    });
+    assert.equal(mem.freeSessions.length, 2);
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
+test('session status/end require authentication (401)', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    assert.equal((await request(baseUrl, '/api/session/status', {})).status, 401);
+    assert.equal((await request(baseUrl, '/api/session/end', { method: 'POST' })).status, 401);
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
 test('unauthenticated access to usage and provider is refused with 401', async () => {
   const mem = createMemoryDb();
   setDbForTests(mem.db);
@@ -579,8 +723,21 @@ test('sessionRolloverNote announces the fresh session; banner line degrades', ()
   assert.match(bannerFreePlanLine(exhausted), /all 6 sessions used/);
 
   const fresh: DailySessionState = { ...sampleState, sessionsUsed: 0, sessionsRemaining: 6, currentSession: null, sessionExpiresAt: null, sessionStartedAt: null };
-  assert.match(bannerFreePlanLine(fresh), /6 of 6 sessions available/);
+  assert.match(bannerFreePlanLine(fresh), /6 sessions remaining today/);
   assert.equal(bannerFreePlanLine(null), '', 'not logged in → no banner row');
+});
+
+test('sessionStatusDisplay renders every server state gracefully', () => {
+  assert.match(sessionStatusDisplay('active'), /active/);
+  assert.match(sessionStatusDisplay('expired'), /fresh session/);
+  assert.match(sessionStatusDisplay('ended'), /fresh session/);
+  assert.match(sessionStatusDisplay('none'), /no session yet/);
+  assert.match(sessionStatusDisplay('rate_limited'), /rate limited/);
+  assert.match(sessionStatusDisplay('model_unavailable'), /fall back/);
+  assert.match(sessionStatusDisplay('banned'), /account disabled/);
+  assert.match(sessionStatusDisplay('unauthorized'), /grace login/);
+  // Unknown future states must not crash the CLI.
+  assert.equal(sessionStatusDisplay('something_new'), 'something_new');
 });
 
 test('session duration is configurable via env (60 minutes by default)', async () => {

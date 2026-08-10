@@ -171,6 +171,48 @@ test('agent loop recovers from a bad tool name with an error result', async () =
   assert.ok(session.toolHistory.some((h) => h.includes('no_such_tool')));
 });
 
+test('agent loop retries a rate-limited turn (bounded backoff) and succeeds', async () => {
+  const root = tempProject();
+  const { project, session, undo, tools } = setup(root);
+  const script: ScriptedTurn[] = [
+    { error: '429 rate limit hit' },
+    { content: 'recovered after the rate limit' },
+  ];
+  const provider = new FakeProvider(script);
+  const loop = new AgentLoop({
+    provider,
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('hi');
+  assert.equal(provider.callCount, 2, 'one retry after the rate limit');
+  assert.equal(result.finalText, 'recovered after the rate limit');
+});
+
+test('agent loop gives up on a persistent rate limit with a bounded number of attempts', async () => {
+  const root = tempProject();
+  const { project, session, undo, tools } = setup(root);
+  const script: ScriptedTurn[] = Array.from({ length: 5 }, () => ({ error: '413 TPM limit exceeded' }));
+  const provider = new FakeProvider(script);
+  const loop = new AgentLoop({
+    provider,
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('hi');
+  assert.equal(provider.callCount, 3, 'exactly three bounded attempts, no blind retry loop');
+  assert.ok(result.finalText.startsWith('I could not reach the AI provider'), 'the failure is reported');
+  assert.match(result.finalText, /rate limit/i, 'the user sees a clear rate-limit hint');
+});
+
 test('agent loop stops at the iteration limit', async () => {
   const root = tempProject();
   const { project, session, undo, tools } = setup(root);

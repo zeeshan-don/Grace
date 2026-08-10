@@ -56,6 +56,22 @@ export interface UsageStatusResult extends DailySessionState {
   usage: unknown[];
 }
 
+/** GET /api/session/status + POST /api/session/end response. */
+export interface SessionStatusResult {
+  session: DailySessionState & {
+    /** Most recent session row id today (null when none yet). */
+    id: string | null;
+    /** 'active' | 'expired' | 'ended' | 'none' (server-authoritative). */
+    status: string;
+    started_at: string | null;
+    expires_at: string | null;
+    /** Router's primary provider + model (never a key). */
+    provider?: string;
+    model?: string;
+    model_router?: string[];
+  };
+}
+
 /** Payload for POST /api/usage (mirrors src/api/usage.ts UsageReport). */
 export interface UsageReportPayload {
   client_run_id: string;
@@ -121,6 +137,19 @@ export class ApiClient {
    */
   async getUsage(token: string): Promise<UsageStatusResult> {
     return this.request<UsageStatusResult>('/api/usage?limit=1', { method: 'GET', token });
+  }
+
+  /**
+   * Server-authoritative session status (GET /api/session/status): quota,
+   * expiry, status label and the router's provider/model. Read-only.
+   */
+  async getSessionStatus(token: string): Promise<SessionStatusResult> {
+    return this.request<SessionStatusResult>('/api/session/status', { method: 'GET', token });
+  }
+
+  /** Explicitly end the active free session (POST /api/session/end). */
+  async endSession(token: string): Promise<SessionStatusResult> {
+    return this.request<SessionStatusResult>('/api/session/end', { method: 'POST', token });
   }
 
   private async request<T>(
