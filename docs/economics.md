@@ -86,4 +86,8 @@ Enough to run a ~10–20 user closed beta without a dashboard:
 
 Advertising, ad tracking/targeting, payments, subscriptions, premium plans and
 billing are out of scope until real usage + cost data exists (Milestones
-13–14). The `usage.cost_usd` column is reserved for the billing pipeline.
+15–16). The `usage.cost_usd` column is reserved for the billing pipeline.
+
+The free tier itself (Milestone 13) is already enforced server-side — see
+`free_sessions` in `docs/database.md` — and `free_sessions` rows are the
+natural input for measuring how much quota each user actually consumes.

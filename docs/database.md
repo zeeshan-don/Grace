@@ -25,6 +25,8 @@ Choose one:
 # from the project root (requires the psql client)
 psql "$DATABASE_URL" -f db/migrations/001_init.sql
 psql "$DATABASE_URL" -f db/migrations/002_auth.sql
+psql "$DATABASE_URL" -f db/migrations/003_closed_beta.sql
+psql "$DATABASE_URL" -f db/migrations/004_free_sessions.sql
 ```
 
 or paste each file into the **Neon SQL Editor** (console.neon.tech → SQL
@@ -44,6 +46,7 @@ Get a database:
 | `001_init.sql` | 10 | `users`, `sessions`, `agent_runs`, `usage`, `models`, `user_economics` view |
 | `002_auth.sql` | 11 | `users.password_hash`, indexes on `sessions.token_hash` and `(user_id, expires_at)` |
 | `003_closed_beta.sql` | 12 | `users.is_beta`, timestamp indexes (`agent_runs/usage/users.created_at`, `sessions.expires_at`) |
+| `004_free_sessions.sql` | 13 | `free_sessions` (ZEESH FREE daily session quota: 6 sessions/day × 60 min, unique per user/day/number) |
 
 ## Schema
 
@@ -55,6 +58,7 @@ Get a database:
 | `usage` | Per-run token usage rows, the source for cost calculation |
 | `models` | Model catalog with placeholder pricing per 1M tokens |
 | `user_economics` | View: runs, total tokens and estimated AI cost per user |
+| `free_sessions` | ZEESH FREE quota rows — one per daily session (`day` = UTC date, `session_number` 1..N, `started_at`, `expires_at`, `ended_at`) |
 
 `agent_runs` + `usage` together track everything the milestones require:
 
@@ -63,10 +67,11 @@ user_id · model · input_tokens · output_tokens · agent_turns · created_at (
 ```
 
 The `user_economics` view joins runs against `models` pricing to estimate AI
-cost per user — the input for the economics milestone (13) that decides ad
-pricing vs. free-tier limits (Milestone 14). Pricing assumptions live in the
-`models` table (documented in `docs/economics.md`) and are editable by upsert
-— they are not hardcoded in application code.
+cost per user — the input for the economics milestone (15) that decides ad
+pricing (Milestone 16); free-tier limits themselves are already live
+(Milestone 13, `free_sessions`). Pricing assumptions live in the `models`
+table (documented in `docs/economics.md`) and are editable by upsert — they
+are not hardcoded in application code.
 
 ## Authentication flow (Milestone 11)
 
@@ -106,3 +111,20 @@ non-fatal — a backend outage never breaks the local agent.
   time-series/observability queries. Lookups by `user_id`, session token hash
   and `client_run_id` were already indexed (see the migration header for the
   full checklist).
+
+## Free plan sessions (Milestone 13)
+
+The free tier (`ZEESH FREE`) is enforced by the backend via the
+`free_sessions` table, written only by `src/api/freeSessions.ts`:
+
+- One row per session: `user_id`, the UTC `day` the session started in,
+  `session_number` (1-based), `started_at`, `expires_at` (start + 60 min) and a
+  lazily-set `ended_at` when the server detects the session expired.
+- `UNIQUE (user_id, day, session_number)` is the concurrency guard: if two
+  requests both try to start session N, one wins and the other retries with the
+  new `MAX` — the daily cap can never be exceeded.
+- The day boundary is **00:00 UTC** (server-authoritative); sessions belong to
+  the day they started in, so a session opened just before midnight rolls into
+  the next day cleanly.
+- The CLI stores nothing about sessions — deleting `~/.zeesh/` or restarting
+  the CLI cannot reset the quota.

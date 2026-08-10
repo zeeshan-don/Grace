@@ -2,17 +2,19 @@ import { homedir } from 'node:os';
 import { createInterface as createInterfaceEvents } from 'node:readline';
 import { createInterface as createInterfacePromises } from 'node:readline/promises';
 import { stdin as processStdin, stdout as processStdout, cwd } from 'node:process';
-import { AgentLoop } from '../agent/loop.ts';
-import { reportRunUsage } from '../auth/reporting.ts';
+import { ApiClient } from '../auth/client.ts';
 import { loadSession } from '../auth/session.ts';
 import { loadEnv } from '../config/config.ts';
 import { projectLabel } from '../project/detect.ts';
+import { RemoteProvider } from '../providers/remote.ts';
 import { createRuntime, type Runtime } from '../runtime.ts';
-import { formatDuration, shortPath } from '../util/text.ts';
+import { shortPath } from '../util/text.ts';
 import { cmdLogin, cmdLogout, cmdRegister, cmdWhoami } from './authCommands.ts';
 import { renderBanner } from './banner.ts';
 import { c } from './colors.ts';
 import { cmdClear, cmdDiff, cmdHelp, cmdModel, cmdStatus, cmdUndo } from './commands.ts';
+import { bannerFreePlanLine } from './freePlan.ts';
+import { runTask } from './taskRunner.ts';
 
 export interface ReplOptions {
   yes?: boolean;
@@ -42,7 +44,7 @@ async function runTty(root: string, opts: ReplOptions): Promise<number> {
     model: opts.model,
     ask: (cmd, reasons) => askPermission(rl, cmd, reasons),
   });
-  printBanner(runtime);
+  await printBanner(runtime);
 
   // Ctrl+C at the prompt: close the interface → pending question rejects → exit cleanly.
   rl.on('SIGINT', () => {
@@ -87,7 +89,7 @@ function nextTaskTty(
 
 async function runPiped(root: string, opts: ReplOptions): Promise<number> {
   const runtime = createRuntime(root, { yes: opts.yes, model: opts.model });
-  printBanner(runtime);
+  await printBanner(runtime);
 
   const rl = createInterfaceEvents({ input: processStdin, crlfDelay: Infinity });
   let closed = false;
@@ -169,7 +171,7 @@ async function runLoop(
     // A failing task must never kill the session — report the error and return
     // to the prompt so the user can try another task.
     try {
-      await runAgent(runtime, trimmed);
+      await runTask(runtime, trimmed, { awaitUsageReport: false });
     } catch (err) {
       console.log(c.red('Task failed unexpectedly: ' + ((err as Error).message ?? err)));
       console.log(c.dim('Returning to the prompt — try again or run /help.'));
@@ -222,7 +224,7 @@ async function handleSlash(runtime: Runtime, cmd: string, arg: string): Promise<
 // Banner
 // ---------------------------------------------------------------------------
 
-function printBanner(runtime: Runtime): void {
+async function printBanner(runtime: Runtime): Promise<void> {
   const projectLabelText = `${projectLabel(runtime.project)} · ${shortPath(runtime.root, homedir())}`;
   const providerStatus = runtime.provider
     ? `${runtime.provider.label} · ${runtime.provider.getModel().id}`
@@ -231,98 +233,30 @@ function printBanner(runtime: Runtime): void {
   const sessionStatus = session
     ? c.green(`logged in as ${session.user.email} · ${session.apiUrl}`)
     : c.dim('not logged in — local-only mode (usage tracking off, optional)');
-  console.log(renderBanner({ project: projectLabelText, provider: providerStatus, session: sessionStatus }));
+  const freePlan = await loadBannerFreePlan(runtime);
+  console.log(renderBanner({ project: projectLabelText, provider: providerStatus, session: sessionStatus, freePlan }));
   console.log('');
+}
+
+/**
+ * ZEESH FREE banner row: fetch the server's daily session state once, briefly.
+ * Best-effort only — a slow/unreachable backend never delays or breaks the CLI.
+ */
+async function loadBannerFreePlan(runtime: Runtime): Promise<string | undefined> {
+  if (!(runtime.provider instanceof RemoteProvider)) return undefined; // local key / offline
+  const session = loadSession();
+  if (!session) return undefined;
+  try {
+    const state = await new ApiClient(session.apiUrl, 2000).getUsage(session.token);
+    return bannerFreePlanLine(state);
+  } catch {
+    return undefined; // backend offline / old backend — banner stays as-is
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Agent execution
 // ---------------------------------------------------------------------------
-
-export async function runAgent(runtime: Runtime, input: string): Promise<void> {
-  if (!runtime.provider) {
-    console.log(c.red(runtime.providerError ?? 'No AI provider configured.'));
-    return;
-  }
-
-  let streamed = '';
-  const onStatus = (msg: string) => {
-    // The loop emits its own "Done in …" status; the CLI prints its own richer
-    // summary, so we skip that line to avoid duplication.
-    if (/^Done in /.test(msg)) return;
-    console.log(c.gray('· ' + msg));
-  };
-
-  const loop = new AgentLoop({
-    provider: runtime.provider,
-    tools: runtime.tools,
-    projectRoot: runtime.root,
-    project: runtime.project,
-    session: runtime.session,
-    undo: runtime.undo,
-    onStatus,
-    onStream: (text) => {
-      streamed += text;
-      processStdout.write(text);
-    },
-    askPermission: runtime.ask,
-  });
-
-  console.log('');
-  const startedAt = Date.now();
-  const result = await loop.run(input);
-  const executionTimeMs = Date.now() - startedAt;
-  console.log('');
-
-  // When nothing was streamed (e.g. a provider error), print the final text so
-  // the user sees what went wrong.  Skip when the iteration limit was hit
-  // without content — the summary already shows a yellow hint for that case.
-  if (result.finalText && !streamed && !result.reachedLimit) {
-    console.log(c.red(result.finalText));
-    console.log('');
-  }
-
-  printSummary(result, executionTimeMs);
-
-  // Usage reporting: fire-and-forget; never blocks the session.
-  if (runtime.provider) {
-    void reportRunUsage({
-      prompt: input,
-      model: runtime.provider.getModel().id,
-      projectType: runtime.project.type,
-      iterations: result.iterations,
-      toolCalls: result.toolCalls,
-      usage: result.usage,
-      executionTimeMs,
-    }).then((outcome) => {
-      if (outcome === 'failed') {
-        console.log(c.dim('· usage report failed (backend offline) — run continued locally.'));
-      }
-    });
-  }
-}
-
-function printSummary(
-  result: Awaited<ReturnType<AgentLoop['run']>>,
-  executionTimeMs: number,
-): void {
-  const lines: string[] = [];
-  if (result.changedFiles.length > 0) {
-    lines.push(c.bold('Changed files:') + ' ' + result.changedFiles.join(', '));
-  }
-  lines.push(
-    c.dim(
-      `${result.iterations} iteration(s) · ${result.toolCalls} tool call(s) · ${formatDuration(executionTimeMs)}`,
-    ),
-  );
-  if (result.usage) {
-    lines.push(c.dim(`tokens: ${result.usage.inputTokens} in · ${result.usage.outputTokens} out`));
-  }
-  if (result.reachedLimit) {
-    lines.push(c.yellow('Iteration limit reached — send "continue" to keep going.'));
-  }
-  console.log(lines.join('\n'));
-}
 
 async function askPermission(
   rl: ReturnType<typeof createInterfacePromises>,

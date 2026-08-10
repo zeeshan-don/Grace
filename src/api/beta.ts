@@ -6,7 +6,7 @@
  *   (unset or 'open')       → unrestricted registration (default).
  *
  * Deliberately minimal: no dashboard, no invite codes — just enough control
- * to let ~10–20 beta testers in and keep everyone else out until Milestone 13
+ * to let ~10–20 beta testers in and keep everyone else out until Milestone 15
  * has real usage/cost data. Existing accounts are never locked out.
  */
 export type BetaMode = 'open' | 'closed';

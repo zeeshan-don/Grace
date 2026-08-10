@@ -6,15 +6,21 @@ import { estimateTokens } from '../util/text.ts';
 export const DEFAULT_CONTEXT_BUDGET = 28_000;
 const MAX_TOOL_CONTENT_CHARS = 8_000;
 
+/** Compact one-line project descriptor shared by the default and subagent prompts. */
+export function projectBits(info: ProjectInfo): string {
+  const bits = [`${info.type}${info.framework ? `/${info.framework}` : ''}`, `pm:${info.packageManager}`];
+  if (info.languages.length) bits.push(`lang:${info.languages.join('+')}`);
+  if (info.testCommand) bits.push(`test:${info.testCommand}`);
+  if (info.buildCommand) bits.push(`build:${info.buildCommand}`);
+  return bits.join(' · ');
+}
+
 export function buildSystemPrompt(info: ProjectInfo): string {
-  const projectBits = [`${info.type}${info.framework ? `/${info.framework}` : ''}`, `pm:${info.packageManager}`];
-  if (info.languages.length) projectBits.push(`lang:${info.languages.join('+')}`);
-  if (info.testCommand) projectBits.push(`test:${info.testCommand}`);
-  if (info.buildCommand) projectBits.push(`build:${info.buildCommand}`);
+  const projectBitsText = projectBits(info);
 
   return [
     'You are ZEESH AI, a coding agent working in the user\'s repository.',
-    `Project: ${projectBits.join(' · ')} · root ${info.root}`,
+    `Project: ${projectBitsText} · root ${info.root}`,
     '',
     'Workflow:',
     '- Inspect with read_file/search_files/list_directory before editing.',

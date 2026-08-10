@@ -5,49 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AgentLoop } from '../src/agent/loop.ts';
 import { detectProject } from '../src/project/detect.ts';
-import type { AIProvider, ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent } from '../src/providers/types.ts';
 import { Session } from '../src/session/session.ts';
 import { UndoStore } from '../src/session/undo.ts';
 import { createTools, type Tool } from '../src/tools/registry.ts';
-
-interface ScriptedTurn {
-  content: string | null;
-  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
-}
-
-class FakeProvider implements AIProvider {
-  readonly id = 'fake';
-  readonly label = 'Fake (test)';
-  private readonly model: ModelInfo = { id: 'fake-1', contextWindow: 128_000, supportedFeatures: ['tool_calls', 'streaming'] };
-  callCount = 0;
-  private readonly script: ScriptedTurn[];
-
-  constructor(script: ScriptedTurn[]) {
-    this.script = script;
-  }
-
-  getModel(): ModelInfo {
-    return this.model;
-  }
-  setModel(): void {
-    /* no-op */
-  }
-  async listModels(): Promise<string[]> {
-    return [this.model.id];
-  }
-  async chat(_messages: ChatMessage[], _options?: ChatOptions): Promise<ChatResult> {
-    throw new Error('streamChat is used by the loop');
-  }
-  async *streamChat(_messages: ChatMessage[], _options?: ChatOptions): AsyncIterable<StreamEvent> {
-    const turn = this.script[this.callCount] ?? { content: 'Done.' };
-    this.callCount += 1;
-    for (const tc of turn.toolCalls ?? []) {
-      yield { type: 'tool_call_delta', index: 0, id: tc.id, name: tc.name, argumentsDelta: tc.arguments };
-    }
-    if (turn.content) yield { type: 'content', content: turn.content };
-    yield { type: 'done', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } };
-  }
-}
+import { FakeProvider, type ScriptedTurn } from './helpers/fakeProvider.ts';
 
 function tempProject(): string {
   return mkdtempSync(join(tmpdir(), 'zeesh-loop-'));

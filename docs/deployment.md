@@ -101,6 +101,7 @@ All migrations are idempotent and safe to re-run; they never delete data:
 psql "$DATABASE_URL" -f db/migrations/001_init.sql
 psql "$DATABASE_URL" -f db/migrations/002_auth.sql
 psql "$DATABASE_URL" -f db/migrations/003_closed_beta.sql
+psql "$DATABASE_URL" -f db/migrations/004_free_sessions.sql
 ```
 
 Verify:
@@ -108,7 +109,7 @@ Verify:
 ```sql
 SELECT version();
 SELECT COUNT(*) FROM users;          -- existing data untouched
-SELECT indexname FROM pg_indexes WHERE tablename IN ('users','sessions','agent_runs','usage');
+SELECT indexname FROM pg_indexes WHERE tablename IN ('users','sessions','agent_runs','usage','free_sessions');
 ```
 
 ## 5. Production deployment
@@ -159,8 +160,11 @@ zeesh logout
 - **Secrets**: if you ever suspect a key leaked, rotate it in Neon/Vercel and
   redeploy. The CLI stores only a session token (mode 0600) and the server
   stores only hashes.
-- **Rate limiting** is in-memory (per instance). For public beta (M13+) move
+- **Rate limiting** is in-memory (per instance). For public beta (M15+) move
   it to a shared store (e.g. Upstash Redis) so limits survive cold starts.
+- **Free-plan sessions** are enforced in Neon (`free_sessions`, migration
+  004) and are safe across cold starts by design — the quota is server-side
+  state, never per-instance memory.
 
 ## Runtime notes
 

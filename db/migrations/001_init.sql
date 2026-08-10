@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS usage (
   model         TEXT NOT NULL,
   input_tokens  INT  NOT NULL DEFAULT 0,
   output_tokens INT  NOT NULL DEFAULT 0,
-  cost_usd      NUMERIC(12,8),         -- filled by the billing pipeline (M13)
+  cost_usd      NUMERIC(12,8),         -- filled by the billing pipeline (M15)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS models (
 );
 
 -- Seed the models the agent uses today. Prices are placeholder estimates and
--- get replaced by the billing pipeline (Milestone 13) with real numbers.
+-- get replaced by the billing pipeline (Milestone 15) with real numbers.
 INSERT INTO models (id, provider, input_ppm_usd, output_ppm_usd, context_tokens)
 VALUES
   ('openai/gpt-oss-120b',      'groq', 0.25, 1.00, 131072),
@@ -84,7 +84,7 @@ VALUES
   ('llama-3.1-8b-instant',     'groq', 0.05, 0.08, 131072)
 ON CONFLICT (id) DO NOTHING;
 
--- Cost per user (drives the economics milestone: M13)
+-- Cost per user (drives the economics milestone: M15)
 CREATE OR REPLACE VIEW user_economics AS
 SELECT
   u.id AS user_id,

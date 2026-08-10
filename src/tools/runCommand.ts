@@ -7,6 +7,31 @@ import type { Tool, ToolContext } from './registry.ts';
 const DEFAULT_TIMEOUT_SEC = 120;
 const MAX_OUTPUT_CHARS = 100_000;
 
+/**
+ * Per-role command policy (subagent coordinator). Applied on top of the
+ * built-in danger assessment:
+ *  - `allowPrefixes` — auto-approved without asking (e.g. test commands),
+ *  - `requireApprovalPrefixes` — always ask, even when the command is not
+ *    flagged by the danger policy (e.g. a git curator staging changes).
+ */
+export interface CommandPolicy {
+  allowPrefixes?: string[];
+  requireApprovalPrefixes?: string[];
+}
+
+/** True when `command` starts with any of the prefixes (word-boundary aware). */
+export function matchesPrefix(command: string, prefixes: string[] | undefined): boolean {
+  if (!prefixes || prefixes.length === 0) return false;
+  const cmd = command.trim();
+  return prefixes.some((p) => {
+    const prefix = p.trim();
+    if (!prefix) return false;
+    // Prefix match must not be a partial word: "npm test" must not match "npm tests".
+    const rest = cmd.slice(prefix.length);
+    return cmd.startsWith(prefix) && (rest === '' || /^\s|^[|&;]/.test(rest));
+  });
+}
+
 export interface RunResult {
   stdout: string;
   stderr: string;
@@ -76,7 +101,7 @@ function resolveCwd(projectRoot: string, raw: string): string {
   return join(projectRoot, raw);
 }
 
-export function createRunCommandTool(ctx: ToolContext): Tool {
+export function createRunCommandTool(ctx: ToolContext & { commandPolicy?: CommandPolicy }): Tool {
   return {
     name: 'run_command',
     description: 'Run a terminal command; returns stdout/stderr/exit code. Destructive commands require user approval.',
@@ -98,10 +123,18 @@ export function createRunCommandTool(ctx: ToolContext): Tool {
       const timeoutSec = typeof args.timeoutSec === 'number' && args.timeoutSec > 0 ? args.timeoutSec : DEFAULT_TIMEOUT_SEC;
 
       const assessment = assessCommand(command);
-      if (assessment.level === 'flagged') {
-        const allowed = await ctx.askPermission(command, assessment.reasons);
-        if (!allowed) {
-          return `Command blocked: user denied permission.\nCommand: ${command}\nReason: ${assessment.reasons.join('; ')}`;
+
+      // Policy tier 1: explicitly approved prefixes never ask (test commands etc.).
+      if (!matchesPrefix(command, ctx.commandPolicy?.allowPrefixes)) {
+        // Policy tier 2: some roles must always confirm mutating operations
+        // (e.g. the git curator staging/committing), even when not dangerous.
+        const mustAsk = matchesPrefix(command, ctx.commandPolicy?.requireApprovalPrefixes);
+        if (assessment.level === 'flagged' || mustAsk) {
+          const reasons = mustAsk ? [...assessment.reasons, 'requires explicit approval for this agent role'] : assessment.reasons;
+          const allowed = await ctx.askPermission(command, reasons);
+          if (!allowed) {
+            return `Command blocked: user denied permission.\nCommand: ${command}\nReason: ${reasons.join('; ')}`;
+          }
         }
       }
 

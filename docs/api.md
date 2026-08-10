@@ -32,6 +32,8 @@ available in this environment.
   - `log.ts` — safe request logging (secrets scrubbed before output).
   - `db.ts` — Neon PostgreSQL client (`DATABASE_URL`), created lazily.
   - `usage.ts` — usage-recording service (`agent_runs` + `usage` rows).
+  - `freeSessions.ts` — ZEESH FREE daily session service (6 sessions/day × 60
+    min, server-enforced; `free_sessions` table, migration `004_free_sessions.sql`).
   - `router.ts` + `server.ts` — local dev server over `node:http`.
 - `api/*.ts` and `api/auth/*.ts` — thin Vercel zero-config serverless functions
   exporting the same handlers.
@@ -46,8 +48,8 @@ available in this environment.
 | POST | `/api/auth/logout` | Session | Invalidate the session |
 | GET | `/api/auth/me` | Session | Current user (whoami) |
 | POST | `/api/usage` | Session | Record one agent run + token usage |
-| GET | `/api/usage?limit=…` | Session | Recent usage rows for the authenticated user |
-| POST | `/api/provider` | Session | Proxy a chat completion (provider key stays server-side) |
+| GET | `/api/usage?limit=…` | Session | Recent usage rows **+ the daily free-session state** for the authenticated user |
+| POST | `/api/provider` | Session | Proxy a chat completion (provider key stays server-side; gated by the free-session quota) |
 
 ### GET /api/health
 
@@ -120,8 +122,27 @@ usage row).
 
 ### GET /api/usage
 
-`Authorization: Bearer <token>` → `200 { "usage": [ … ] }` limited to the
-authenticated user's rows (`?limit=`, default 20, max 100).
+`Authorization: Bearer <token>` → `200` with the authenticated user's recent
+rows (`?limit=`, default 20, max 100) **plus the ZEESH FREE daily session
+state** (Milestone 13):
+
+```json
+{
+  "usage": [ { "id": 1, "model": "openai/gpt-oss-120b", "input_tokens": 4520, "output_tokens": 890, "created_at": "…" } ],
+  "sessionsUsed": 2,
+  "sessionsRemaining": 4,
+  "currentSession": 2,
+  "sessionStartedAt": "2026-08-10T09:00:00.000Z",
+  "sessionExpiresAt": "2026-08-10T10:00:00.000Z",
+  "dailyUsedSeconds": 5400,
+  "dailyLimitSeconds": 21600
+}
+```
+
+This endpoint is **read-only** — it never starts or consumes a session (only
+inference requests do). The server is the single source of truth for the
+quota: the CLI stores nothing locally, so restarting it or deleting local
+files can never reset the limit.
 
 ### POST /api/provider
 
@@ -133,7 +154,22 @@ authenticated user's rows (`?limit=`, default 20, max 100).
 }
 ```
 
-`200` → `{ "content": "…", "tool_calls": [], "usage": {…}, "finish_reason": "stop" }`.
+`200` → `{ "content": "…", "tool_calls": [], "usage": {…}, "finish_reason": "stop", "session": { … } }`.
+
+**Free-plan gate (Milestone 13):** before any model call, the server runs the
+daily session gate (`src/api/freeSessions.ts`):
+
+- No active session + quota remains → a session is **auto-started** (the
+  response's `session.startedNew` is `true`, telling the CLI a rollover
+  happened).
+- Active session → the request runs inside it (`startedNew: false`).
+- All 6 sessions for the day used → `429` with
+  `{ "error": "…", "code": "daily_limit_exhausted" }` and a `Retry-After`
+  header pointing at the next UTC day. No provider call is made.
+
+The response embeds the same state as `GET /api/usage` (`sessionsUsed`,
+`sessionsRemaining`, `currentSession`, `sessionStartedAt`, `sessionExpiresAt`,
+`dailyUsedSeconds`, `dailyLimitSeconds`) plus `startedNew`.
 
 ## Authentication model
 
@@ -144,6 +180,22 @@ authenticated user's rows (`?limit=`, default 20, max 100).
   server-side — only `SHA-256(token)` in `sessions.token_hash`.
 - Sessions expire after 30 days (`sessions.expires_at`); expired/invalid tokens
   get `401`.
+
+## Free plan — daily sessions (Milestone 13)
+
+ZEESH FREE quotas are **backend-authoritative**. See the
+[Free plan section in the README](../README.md#free-plan--daily-sessions-milestone-13-zeesh-free)
+for the product rules; the API surface is:
+
+- `free_sessions` rows (Neon, `004_free_sessions.sql`): `user_id`, UTC `day`,
+  `session_number`, `started_at`, `expires_at`, `ended_at`, with a
+  `UNIQUE (user_id, day, session_number)` constraint that makes concurrent
+  session starts race-safe (the loser retries with the new `MAX`).
+- Sessions belong to the UTC day they started in; the day boundary is
+  **00:00 UTC** for every user.
+- Expiry is detected lazily on each request — no background job needed.
+- A day's `dailyUsedSeconds` sums each session's elapsed time, capped at its
+  own 60-minute length and at the 6-hour daily cap.
 
 ## Rate limiting
 
@@ -160,7 +212,7 @@ its error message (`Too many attempts — try again in Ns`). The limiter is
 per-process and fails safe (invalid env config falls back to defaults); the
 CLI's usage reporter treats any failure as non-fatal and never interrupts the
 local agent. A shared store (Redis/Upstash) is recommended before public beta
-(M13).
+(M15).
 
 ## Environment variables
 
@@ -174,6 +226,8 @@ local agent. A shared store (Redis/Upstash) is recommended before public beta
 | `ZEESH_CORS_ORIGIN` | API only | Browser origin allowed to call the API (default `*`) |
 | `ZEESH_AUTH_RATE_LIMIT_MAX` | API only | Auth rate-limit budget (default 50/15 min) |
 | `ZEESH_API_RATE_LIMIT_MAX` | API only | API rate-limit budget (default 300/min) |
+| `ZEESH_SESSIONS_PER_DAY` | API only | Free-plan sessions per user per day (default 6) |
+| `ZEESH_SESSION_DURATION_MINUTES` | API only | Free-plan session length (default 60) |
 
 Placeholders in [`.env.example`](../.env.example). `.env` and other secret
 files are git-ignored.
@@ -214,7 +268,7 @@ Notes:
 - Every function exports `withHttp(handler)`, so CORS, preflight, safe errors
   and request logging behave identically to the local dev server.
 - The in-memory rate limiter resets per cold start; move to Redis/Upstash
-  before public beta (Milestone 13).
+  before public beta (Milestone 15).
 
 ## Security notes (current state)
 

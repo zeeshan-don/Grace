@@ -11,9 +11,14 @@ are done.
 - [ ] **Typecheck passed** — `npm run typecheck`
 - [ ] **Backend health check** — `npm run smoke` (prints `SMOKE OK`) or
       `npm run serve` + `curl localhost:8787/api/health` → `"status":"ok"`
-- [ ] **Database migration** — apply `db/migrations/001_init.sql`,
-      `002_auth.sql`, `003_closed_beta.sql` to Neon; verify with
+- [ ] **Database migration** — apply `db/migrations/001_init.sql` …
+      `004_free_sessions.sql` to Neon; verify with
       `SELECT COUNT(*) FROM users;` (existing data intact)
+- [ ] **Free-plan sessions** — with a fresh account, `GET /api/usage` returns
+      `sessionsUsed: 0`, `sessionsRemaining: 6`; one `/api/provider` request
+      starts session 1 (`currentSession: 1`); after the 6th session the 7th
+      returns `429` with `code: "daily_limit_exhausted"`
+      (unit-tested in `tests/freeSessions.test.ts`)
 - [ ] **Registration** — `zeesh register` → "Account created — logged in as …"
 - [ ] **Login** — `zeesh login` → "Logged in as …"
 - [ ] **Logout** — `zeesh logout` → "Logged out — local session removed."

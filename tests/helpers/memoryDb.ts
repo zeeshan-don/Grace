@@ -42,12 +42,24 @@ export interface MemUsageRow {
   created_at: string;
 }
 
+export interface MemFreeSession {
+  id: string;
+  user_id: string;
+  /** UTC day bucket (YYYY-MM-DD) the session belongs to. */
+  day: string;
+  session_number: number;
+  started_at: string;
+  expires_at: string;
+  ended_at: string | null;
+}
+
 export interface MemoryDb {
   db: Db;
   users: MemUser[];
   sessions: MemSession[];
   runs: MemRun[];
   usageRows: MemUsageRow[];
+  freeSessions: MemFreeSession[];
 }
 
 /** Create a fresh in-memory database. */
@@ -57,6 +69,7 @@ export function createMemoryDb(): MemoryDb {
   const sessions: MemSession[] = [];
   const runs: MemRun[] = [];
   const usageRows: MemUsageRow[] = [];
+  const freeSessions: MemFreeSession[] = [];
 
   const db: Db = async (sql, params: unknown[] = []) => {
     // Health probe.
@@ -154,8 +167,68 @@ export function createMemoryDb(): MemoryDb {
         }));
     }
 
+    // ---- FreeSessionService (ZEESH FREE, Milestone 13) --------------------
+    if (sql.includes('INSERT INTO free_sessions')) {
+      const [userId, day, sessionNumber, startedAt, expiresAt] = params as [
+        string, string, number, string, string,
+      ];
+      // Mirrors the real UNIQUE (user_id, day, session_number) constraint:
+      // concurrent starts collide here and the service retries.
+      const conflict = freeSessions.some(
+        (s) => s.user_id === userId && s.day === day && s.session_number === sessionNumber,
+      );
+      if (conflict) {
+        const err = new Error('duplicate key value violates unique constraint "free_sessions"') as Error & {
+          code: string;
+        };
+        err.code = '23505'; // SQLSTATE unique_violation, like Postgres
+        throw err;
+      }
+      const row: MemFreeSession = {
+        id: randomUUID(),
+        user_id: userId,
+        day,
+        session_number: sessionNumber,
+        started_at: startedAt,
+        expires_at: expiresAt,
+        ended_at: null,
+      };
+      freeSessions.push(row);
+      return [{
+        id: row.id,
+        user_id: row.user_id,
+        day: row.day,
+        session_number: row.session_number,
+        started_at: row.started_at,
+        expires_at: row.expires_at,
+        ended_at: row.ended_at,
+      }];
+    }
+    if (sql.includes('FROM free_sessions')) {
+      const userId = params[0] as string;
+      const day = params[1] as string;
+      return freeSessions
+        .filter((s) => s.user_id === userId && s.day === day)
+        .sort((a, b) => a.session_number - b.session_number)
+        .map((s) => ({
+          id: s.id,
+          user_id: s.user_id,
+          day: s.day,
+          session_number: s.session_number,
+          started_at: s.started_at,
+          expires_at: s.expires_at,
+          ended_at: s.ended_at,
+        }));
+    }
+    if (sql.includes('UPDATE free_sessions')) {
+      const id = params[0] as string;
+      const row = freeSessions.find((s) => s.id === id);
+      if (row && !row.ended_at) row.ended_at = row.expires_at; // ended_at = expires_at
+      return [];
+    }
+
     throw new Error(`MemoryDb: unhandled query: ${sql}`);
   };
 
-  return { db, users, sessions, runs, usageRows };
+  return { db, users, sessions, runs, usageRows, freeSessions };
 }

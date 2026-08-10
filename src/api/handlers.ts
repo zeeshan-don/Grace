@@ -18,6 +18,7 @@ import { getDb } from './db.ts';
 import { logApiEvent } from './log.ts';
 import { checkRateLimit, clientIp } from './rateLimit.ts';
 import { runServerChat, type ChatRequest } from './providers.ts';
+import { FreeSessionService, secondsUntilUtcMidnight } from './freeSessions.ts';
 import { isObject, methodNotAllowed, type ApiHandler, type ApiRequest, type ApiResponse } from './types.ts';
 import { UsageError, UsageService, type UsageReport } from './usage.ts';
 
@@ -183,7 +184,12 @@ async function listUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
   const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 100) : 20;
   try {
     const rows = await new UsageService(db).recentUsageForUser(auth.user.id, limit);
-    res.status(200).json({ usage: rows });
+    // ZEESH FREE: the daily session summary (Milestone 13) rides along so the
+    // CLI can render "Session X / 6 · time remaining · today's usage" without
+    // trusting any client-side state. getState is read-only — it never starts
+    // or consumes a session.
+    const sessionState = await new FreeSessionService(db).getState(auth.user.id);
+    res.status(200).json({ usage: rows, ...sessionState });
   } catch {
     res.status(500).json({ error: 'Could not load usage.' });
   }
@@ -204,7 +210,26 @@ export const providerHandler: ApiHandler = async (req, res) => {
   if (!rate.ok) return tooManyRequests(res, rate.retryAfterSeconds);
   if (!isObject(req.body)) return res.status(400).json({ error: 'Request body must be a JSON object.' });
 
-  const outcome = await runServerChat(req.body as unknown as ChatRequest);
+  // Validate the payload BEFORE the free-plan gate so a malformed request can
+  // never consume (or start) a session slot.
+  const chatRequest = req.body as unknown as ChatRequest;
+  if (!Array.isArray(chatRequest.messages) || chatRequest.messages.length === 0) {
+    return res.status(400).json({ error: '"messages" must be a non-empty array.' });
+  }
+
+  // ZEESH FREE (Milestone 13): the free-plan gate is authoritative and runs
+  // BEFORE any provider call, so exhausted/expired accounts never reach the
+  // model. An expired session with quota left auto-starts the next one; the
+  // response tells the CLI a new session began (session.startedNew).
+  const gate = await new FreeSessionService(db).ensureActiveSession(auth.user.id);
+  if (!gate.ok) {
+    // "All N sessions used" — Retry-After hints at the next UTC day, and the
+    // current state rides along so the rejection is self-describing.
+    res.setHeader('Retry-After', String(secondsUntilUtcMidnight()));
+    return res.status(gate.status).json({ error: gate.error, code: gate.code, session: gate.state });
+  }
+
+  const outcome = await runServerChat(chatRequest);
   if (!outcome.ok) return res.status(outcome.status).json({ error: outcome.error });
 
   res.status(200).json({
@@ -212,6 +237,9 @@ export const providerHandler: ApiHandler = async (req, res) => {
     tool_calls: outcome.result.toolCalls,
     usage: outcome.result.usage,
     finish_reason: outcome.result.finishReason,
+    // The current free-plan state (and whether this request rolled the user
+    // into a fresh session) so the CLI can render the quota line.
+    session: { ...gate.state, startedNew: gate.startedNew },
   });
 };
 

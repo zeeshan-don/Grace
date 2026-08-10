@@ -21,6 +21,8 @@ export interface BannerInfo {
   provider: string;
   /** Auth/session status, e.g. "logged in as dev@example.com". */
   session: string;
+  /** ZEESH FREE daily session line (optional — hidden when absent). */
+  freePlan?: string;
 }
 
 const W = 64; // status panel width
@@ -36,13 +38,17 @@ function row(label: string, value: string): string {
 export function renderBanner(info: BannerInfo): string {
   const art = ART.map((line) => '  ' + c.cyan(line)).join('\n');
   const head = `  ${c.bold(c.cyan(DISPLAY_NAME))} · ${c.dim(TAGLINE)} · ${c.dim(`v${VERSION}`)}`;
+  const rows = [
+    row('Directory', info.project),
+    row('Provider', info.provider),
+    row('Session', info.session),
+  ];
+  if (info.freePlan) rows.push(row('Free plan', info.freePlan));
   return [
     art,
     head,
     `  ${c.dim(divider())}`,
-    row('Directory', info.project),
-    row('Provider', info.provider),
-    row('Session', info.session),
+    ...rows,
     `  ${c.dim(divider())}`,
     `  ${c.dim('Enter a coding task or / for commands')}  ${c.dim('(e.g. /help · /exit)')}`,
   ].join('\n');

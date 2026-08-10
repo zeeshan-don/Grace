@@ -10,6 +10,7 @@
  * The backend proxy is non-streaming today: `streamChat` buffers the single
  * response and replays it as stream events.
  */
+import type { DailySessionState } from '../auth/client.ts';
 import type {
   AIProvider,
   ChatMessage,
@@ -50,7 +51,12 @@ interface ProviderResponse {
   tool_calls?: ToolCallParam[];
   usage?: Usage;
   finish_reason?: string;
+  /** ZEESH FREE session state; `startedNew` is set when this request rolled the user into a fresh session. */
+  session?: DailySessionState & { startedNew?: boolean };
 }
+
+/** Free-plan state from the last provider response (success or 429; or null). */
+export type LastSessionInfo = DailySessionState & { startedNew?: boolean };
 
 export class RemoteProvider implements AIProvider {
   readonly id = 'remote';
@@ -60,12 +66,22 @@ export class RemoteProvider implements AIProvider {
   private readonly token: string;
   private readonly timeoutMs: number;
   private modelId: string;
+  private sessionInfo: LastSessionInfo | null = null;
 
   constructor(opts: RemoteProviderOptions) {
     this.apiUrl = opts.apiUrl.replace(/\/+$/, '');
     this.token = opts.token;
     this.modelId = opts.model ?? 'openai/gpt-oss-120b';
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  /**
+   * Free-plan state from the most recent provider response (ZEESH FREE).
+   * Null until the first response that carries session state, or when the
+   * backend predates the session system.
+   */
+  get lastSession(): LastSessionInfo | null {
+    return this.sessionInfo;
   }
 
   getModel(): ModelInfo {
@@ -87,6 +103,7 @@ export class RemoteProvider implements AIProvider {
 
   async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<ChatResult> {
     const data = await this.post(messages, options);
+    if (data?.session) this.sessionInfo = data.session;
     return {
       content: data?.content ?? null,
       toolCalls: data?.tool_calls ?? [],
@@ -134,19 +151,28 @@ export class RemoteProvider implements AIProvider {
       throw new RemoteProviderError(0, `${detail} Check your connection and ZEESH_API_URL.`);
     }
 
-    const data = (await res.json().catch(() => null)) as (ProviderResponse & { error?: string }) | null;
-    if (!res.ok) throw new RemoteProviderError(res.status, this.describeError(res.status, data?.error));
+    const data = (await res.json().catch(() => null)) as (ProviderResponse & { error?: string; code?: string }) | null;
+    if (!res.ok) {
+      // Even a rejection (e.g. 429 daily_limit_exhausted) may carry the current
+      // session state, so the CLI can still render the quota.
+      if (res.status === 429 && data?.session) this.sessionInfo = data.session;
+      throw new RemoteProviderError(res.status, this.describeError(res.status, data?.error, data?.code));
+    }
     if (data === null) {
       throw new RemoteProviderError(res.status, 'The ZEESH AI backend returned an invalid response.');
     }
     return data;
   }
 
-  private describeError(status: number, error?: string): string {
+  private describeError(status: number, error?: string, code?: string): string {
     if (status === 401) {
       return 'Your ZEESH AI session is invalid or expired — run "zeesh login" again.';
     }
     if (status === 429) {
+      if (code === 'daily_limit_exhausted') {
+        // The server's message is the authoritative, user-safe text.
+        return error ?? 'You have used all free sessions for today.';
+      }
       return 'The ZEESH AI backend rate limit was hit — wait a moment and retry.';
     }
     return error ? `${error} (status ${status})` : `The ZEESH AI backend returned status ${status}.`;

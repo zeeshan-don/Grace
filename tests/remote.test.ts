@@ -125,6 +125,47 @@ test('RemoteProvider.chat tolerates missing optional fields in the response', as
   assert.deepEqual(result.toolCalls, []);
   assert.equal(result.usage, undefined);
   assert.equal(result.finishReason, 'stop');
+  assert.equal(provider.lastSession, null, 'no session field → nothing to display');
+});
+
+test('RemoteProvider captures the ZEESH FREE session state from the response', async () => {
+  const mock = await startMock(() => ({
+    status: 200,
+    body: {
+      content: 'ok',
+      finish_reason: 'stop',
+      session: {
+        sessionsUsed: 2,
+        sessionsRemaining: 4,
+        currentSession: 2,
+        sessionStartedAt: '2026-08-10T09:00:00.000Z',
+        sessionExpiresAt: '2026-08-10T10:00:00.000Z',
+        dailyUsedSeconds: 3600,
+        dailyLimitSeconds: 21600,
+        startedNew: true,
+      },
+    },
+  }));
+  const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok' });
+  await provider.chat(msgs);
+  assert.equal(provider.lastSession?.currentSession, 2);
+  assert.equal(provider.lastSession?.startedNew, true, 'rollover is surfaced to the CLI');
+  assert.equal(provider.lastSession?.sessionsRemaining, 4);
+});
+
+test('RemoteProvider maps 429 daily_limit_exhausted to the server message', async () => {
+  const mock = await startMock(() => ({
+    status: 429,
+    body: { error: 'You have used all 6 free sessions for today.', code: 'daily_limit_exhausted' },
+  }));
+  const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok' });
+  await assert.rejects(
+    () => provider.chat(msgs),
+    (err: unknown) =>
+      err instanceof RemoteProviderError &&
+      err.status === 429 &&
+      /all 6 free sessions/.test(err.message),
+  );
 });
 
 // ---------------------------------------------------------------------------

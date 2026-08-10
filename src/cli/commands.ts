@@ -1,4 +1,6 @@
 import { homedir } from 'node:os';
+import { ApiClient } from '../auth/client.ts';
+import { loadSession } from '../auth/session.ts';
 import { loadAppConfig, saveAppConfig, DEFAULT_MODELS } from '../config/config.ts';
 import { diffStat, diffUnified, gitSummary, statusShort } from '../git/git.ts';
 import { projectLabel } from '../project/detect.ts';
@@ -6,6 +8,7 @@ import type { Runtime } from '../runtime.ts';
 import { shortPath } from '../util/text.ts';
 import { c } from './colors.ts';
 import { renderHelp } from './banner.ts';
+import { formatCountdown, formatDailyUsage, sessionSecondsLeft } from './freePlan.ts';
 
 export async function cmdHelp(): Promise<void> {
   console.log(renderHelp());
@@ -88,9 +91,41 @@ export async function cmdStatus(runtime: Runtime): Promise<void> {
   console.log(`  Tokens (in/out): ${runtime.session.stats.inputTokens} / ${runtime.session.stats.outputTokens}`);
   console.log(`  Undo stack:   ${runtime.undo.count} snapshot(s)`);
 
+  await printFreePlanStatus();
+
   console.log(c.bold('Runtime'));
   console.log(`  node ${process.version} · ${process.platform}`);
   console.log(`  State dir:    ${shortPath(runtime.root + '/.zeesh', homedir())}`);
+}
+
+/**
+ * ZEESH FREE daily session section of /status. Server-authoritative and
+ * best-effort: offline / pre-session backends just print a dim note.
+ */
+async function printFreePlanStatus(): Promise<void> {
+  console.log(c.bold('Free plan'));
+  const session = loadSession();
+  if (!session) {
+    console.log('  Not logged in — local/offline mode (no session limits).');
+    return;
+  }
+  try {
+    const state = await new ApiClient(session.apiUrl, 3000).getUsage(session.token);
+    const total = state.sessionsUsed + state.sessionsRemaining;
+    console.log(`  Sessions:     ${state.sessionsUsed} / ${total} used today`);
+    console.log(`  Daily usage:  ${formatDailyUsage(state.dailyUsedSeconds)} / ${formatDailyUsage(state.dailyLimitSeconds)}`);
+    const left = sessionSecondsLeft(state.sessionExpiresAt);
+    console.log(
+      left !== null
+        ? `  Time left:    ${formatCountdown(left)} (session ${state.currentSession ?? '—'})`
+        : `  Time left:    no active session (${state.sessionsRemaining} remaining)`,
+    );
+    if (state.sessionsRemaining === 0 && left === null) {
+      console.log(c.yellow('  Daily quota reached — new sessions unlock at 00:00 UTC.'));
+    }
+  } catch {
+    console.log(c.dim('  Could not reach the backend (offline) — server enforces limits.'));
+  }
 }
 
 export async function cmdDiff(runtime: Runtime): Promise<void> {

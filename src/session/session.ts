@@ -19,12 +19,30 @@ export interface SessionData {
 const EMPTY_STATS: SessionStats = { runs: 0, toolCalls: 0, inputTokens: 0, outputTokens: 0 };
 
 /**
+ * Minimal conversation surface the agent loop depends on. Both the persistent
+ * `Session` (project history) and the coordinator's throwaway `MemorySession`
+ * (subagent runs) implement it, so the loop never cares where messages live.
+ */
+export interface ConversationStore {
+  messages: ChatMessage[];
+  toolHistory: string[];
+  stats: SessionStats;
+  pushMessage(msg: ChatMessage): void;
+  recordToolCall(description: string): void;
+  beginRun(): void;
+  addUsage(inputTokens: number | undefined, outputTokens: number | undefined): void;
+  clear(): void;
+  save(): void;
+  get messageCount(): number;
+}
+
+/**
  * Persists the conversation and tool history for the current project under
  * `.zeesh/session.json`. History is used to continue multi-turn tasks and
  * is wiped by `/clear`. Never contains secrets: tool outputs are redacted
  * before they are stored.
  */
-export class Session {
+export class Session implements ConversationStore {
   messages: ChatMessage[] = [];
   toolHistory: string[] = [];
   stats: SessionStats = { ...EMPTY_STATS };

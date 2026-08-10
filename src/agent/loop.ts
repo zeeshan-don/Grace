@@ -1,19 +1,22 @@
 import type { AIProvider, ChatMessage, StreamEvent, ToolCallParam, ToolDefinition, Usage } from '../providers/types.ts';
 import type { ProjectInfo } from '../project/detect.ts';
 import { gitAwareness } from '../git/git.ts';
-import type { Session } from '../session/session.ts';
+import type { ConversationStore } from '../session/session.ts';
 import type { UndoStore } from '../session/undo.ts';
 import type { Tool } from '../tools/registry.ts';
 import { truncateMiddle } from '../util/text.ts';
-import { buildSystemPrompt, DEFAULT_CONTEXT_BUDGET, trimMessages } from './context.ts';
+import { buildSystemPrompt, projectBits, DEFAULT_CONTEXT_BUDGET, trimMessages } from './context.ts';
 
 export interface AgentRunContext {
   provider: AIProvider;
   tools: Tool[];
   projectRoot: string;
   project: ProjectInfo;
-  session: Session;
+  /** Conversation store — the persistent Session or a subagent MemorySession. */
+  session: ConversationStore;
   undo: UndoStore;
+  /** Override the default project system prompt (used by subagents). */
+  systemPrompt?: string;
   /** Called with status lines (dim, prefixed). */
   onStatus?: (msg: string) => void;
   /** Called with streamed assistant text so the CLI can print it live. */
@@ -58,7 +61,10 @@ export class AgentLoop {
 
     session.beginRun();
     session.pushMessage({ role: 'user', content: input });
-    const system = `${buildSystemPrompt(this.ctx.project)}\n\nGit:\n${gitAwareness(this.ctx.projectRoot)}`;
+    const defaultSystem = buildSystemPrompt(this.ctx.project);
+    const system = this.ctx.systemPrompt
+      ? `${this.ctx.systemPrompt}\n\nProject: ${projectBits(this.ctx.project)}\nGit:\n${gitAwareness(this.ctx.projectRoot)}`
+      : `${defaultSystem}\n\nGit:\n${gitAwareness(this.ctx.projectRoot)}`;
     const messages: ChatMessage[] = [{ role: 'system', content: system }, ...session.messages];
     const toolDefs = this.toolDefs();
 

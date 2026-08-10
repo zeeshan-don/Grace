@@ -36,6 +36,26 @@ export interface SessionResult {
   expires_at: string;
 }
 
+/**
+ * ZEESH FREE daily session summary returned by GET /api/usage and embedded in
+ * POST /api/provider responses (mirrors src/api/freeSessions.ts
+ * DailySessionState — keep both in sync).
+ */
+export interface DailySessionState {
+  sessionsUsed: number;
+  sessionsRemaining: number;
+  currentSession: number | null;
+  sessionStartedAt: string | null;
+  sessionExpiresAt: string | null;
+  dailyUsedSeconds: number;
+  dailyLimitSeconds: number;
+}
+
+/** GET /api/usage response: recent usage rows + the daily session summary. */
+export interface UsageStatusResult extends DailySessionState {
+  usage: unknown[];
+}
+
 /** Payload for POST /api/usage (mirrors src/api/usage.ts UsageReport). */
 export interface UsageReportPayload {
   client_run_id: string;
@@ -93,6 +113,14 @@ export class ApiClient {
   /** Record one agent run + token usage. */
   async reportUsage(token: string, report: UsageReportPayload): Promise<{ run_id?: number }> {
     return this.request<{ run_id?: number }>('/api/usage', { method: 'POST', token, body: report });
+  }
+
+  /**
+   * Current free-plan session state (ZEESH FREE). The server is the source of
+   * truth — the CLI never stores or enforces sessions locally.
+   */
+  async getUsage(token: string): Promise<UsageStatusResult> {
+    return this.request<UsageStatusResult>('/api/usage?limit=1', { method: 'GET', token });
   }
 
   private async request<T>(
