@@ -8,7 +8,7 @@
  * abstraction untouched (src/providers).
  */
 import { createProvider } from '../providers/registry.ts';
-import type { AIProvider, ChatMessage, ChatOptions, ChatResult } from '../providers/types.ts';
+import type { AIProvider, ChatMessage, ChatOptions, ChatResult, ToolDefinition } from '../providers/types.ts';
 import { logApiEvent } from './log.ts';
 
 export interface ServerProvider {
@@ -40,6 +40,8 @@ export interface ChatRequest {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /** Tool definitions forwarded to the model so agent tool calls work remotely. */
+  tools?: ToolDefinition[];
 }
 
 export interface ChatOk {
@@ -71,6 +73,7 @@ export async function runServerChat(req: ChatRequest): Promise<ChatOutcome> {
   const opts: ChatOptions = {};
   if (req.temperature !== undefined) opts.temperature = req.temperature;
   if (req.maxTokens !== undefined) opts.maxTokens = req.maxTokens;
+  if (req.tools !== undefined && req.tools.length > 0) opts.tools = req.tools;
   const startedAt = Date.now();
   try {
     const result = await created.provider.chat(req.messages, opts);

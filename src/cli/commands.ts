@@ -31,7 +31,7 @@ export async function cmdModel(runtime: Runtime, arg: string): Promise<void> {
     console.log(c.dim('Fetching models…'));
     const models = await provider.listModels();
     if (models.length === 0) {
-      console.log(c.yellow('Could not list models (check your API key and network).'));
+      console.log(c.yellow('Could not list models for this provider — set one directly with /model <id>.'));
       return;
     }
     console.log(models.map((m) => '  ' + m).join('\n'));

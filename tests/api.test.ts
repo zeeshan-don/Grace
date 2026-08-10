@@ -488,6 +488,28 @@ test('runServerChat validates the messages payload', async () => {
   }
 });
 
+test('runServerChat forwards tools to the provider options (agent tool calls work remotely)', async () => {
+  process.env.GROQ_API_KEY = 'gsk_fake_key_for_tests';
+  const original = GroqProvider.prototype.chat;
+  let forwardedTools: unknown;
+  GroqProvider.prototype.chat = (async (_messages, options = {}) => {
+    forwardedTools = options.tools;
+    return { content: 'ok', toolCalls: [], finishReason: 'stop' };
+  }) as typeof GroqProvider.prototype.chat;
+  try {
+    const outcome = await runServerChat({
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'read_file', description: 'Read', parameters: {} } }],
+    });
+    assert.equal(outcome.ok, true);
+    assert.ok(Array.isArray(forwardedTools));
+    assert.equal((forwardedTools as Array<{ function: { name: string } }>)[0]?.function.name, 'read_file');
+  } finally {
+    GroqProvider.prototype.chat = original;
+    delete process.env.GROQ_API_KEY;
+  }
+});
+
 test('POST /api/provider refuses when the server key is missing', async () => {
   delete process.env.GROQ_API_KEY;
   const mem = createMemoryDb();

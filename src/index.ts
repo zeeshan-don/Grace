@@ -112,7 +112,7 @@ function usage(): string {
     '  --version, -v    Show version',
     '',
     'Environment:',
-    '  GROQ_API_KEY     Your Groq API key (also read from .env in the project)',
+    '  GROQ_API_KEY     Your Groq API key (optional when logged in — the backend provides the model)',
     '  ZEESH_API_URL    ZEESH AI backend URL (default http://localhost:8787)',
     '  ZEESH_SHELL      Override the shell used by run_command',
     '  NO_COLOR         Disable ANSI colors',

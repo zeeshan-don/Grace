@@ -161,7 +161,7 @@ function printBanner(runtime: Runtime): void {
   const projectLabelText = `${projectLabel(runtime.project)} · ${shortPath(runtime.root, homedir())}`;
   const providerStatus = runtime.provider
     ? `${runtime.provider.label} · ${runtime.provider.getModel().id}`
-    : c.yellow('Groq not configured — add GROQ_API_KEY to .env');
+    : c.yellow('No provider — add GROQ_API_KEY to .env or /login to use the ZEESH AI backend');
   console.log(renderBanner(projectLabelText, providerStatus));
   console.log(c.dim('Type /help for commands, or describe a task in plain English.'));
   if (!loadSession()) {

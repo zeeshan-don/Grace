@@ -1,7 +1,9 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { clearSession, loadSession, sessionExpired, type StoredSession } from './auth/session.ts';
 import { groqApiKey, loadAppConfig, resolveModel } from './config/config.ts';
 import { createProvider } from './providers/registry.ts';
+import { RemoteProvider } from './providers/remote.ts';
 import type { AIProvider } from './providers/types.ts';
 import { detectProject, type ProjectInfo } from './project/detect.ts';
 import { isGitRepo } from './git/git.ts';
@@ -31,6 +33,38 @@ export interface Runtime {
   model: string;
 }
 
+/** Shown when neither a local key nor a login session is available. */
+export const NO_PROVIDER_MESSAGE =
+  'No AI provider configured — add GROQ_API_KEY to .env or run "zeesh login" to use the ZEESH AI backend. Slash commands still work.';
+
+export type ProviderResolution =
+  | { provider: AIProvider; error: null }
+  | { provider: null; error: string };
+
+/**
+ * Pick the AI provider for a run:
+ *  1. a local GROQ_API_KEY wins (offline/self-hosted usage),
+ *  2. otherwise a valid login session proxies model calls through the ZEESH AI
+ *     backend (`POST /api/provider`) so production keys stay server-side.
+ */
+export function resolveProvider(
+  key: string | undefined,
+  model: string,
+  session: StoredSession | null,
+): ProviderResolution {
+  if (key) {
+    try {
+      return { provider: createProvider('groq', { apiKey: key, model }), error: null };
+    } catch (err) {
+      return { provider: null, error: (err as Error).message };
+    }
+  }
+  if (session && !sessionExpired(session)) {
+    return { provider: new RemoteProvider({ apiUrl: session.apiUrl, token: session.token, model }), error: null };
+  }
+  return { provider: null, error: NO_PROVIDER_MESSAGE };
+}
+
 export function createRuntime(root: string, opts: RuntimeOptions = {}): Runtime {
   const cfg = loadAppConfig();
   const model = resolveModel(opts.model, cfg);
@@ -40,17 +74,11 @@ export function createRuntime(root: string, opts: RuntimeOptions = {}): Runtime 
   const undo = new UndoStore(root);
 
   const key = groqApiKey();
-  let provider: AIProvider | null = null;
-  let providerError: string | null = null;
-  if (key) {
-    try {
-      provider = createProvider('groq', { apiKey: key, model });
-    } catch (err) {
-      providerError = (err as Error).message;
-    }
-  } else {
-    providerError = 'GROQ_API_KEY not set — add it to .env or export it. Slash commands still work.';
+  const stored = loadSession();
+  if (stored && sessionExpired(stored)) {
+    clearSession(); // don't keep stale credentials around
   }
+  const { provider, error: providerError } = resolveProvider(key, model, stored);
 
   const ask = opts.ask ?? defaultAsk;
   const tools = createTools({ projectRoot: root, askPermission: ask, undo });
