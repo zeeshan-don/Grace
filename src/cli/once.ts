@@ -5,7 +5,7 @@ import { reportRunUsage } from '../auth/reporting.ts';
 import { PRODUCT, VERSION } from '../meta.ts';
 import { loadEnv } from '../config/config.ts';
 import { createRuntime } from '../runtime.ts';
-import { shortPath } from '../util/text.ts';
+import { formatDuration, shortPath } from '../util/text.ts';
 import { c } from './colors.ts';
 
 export interface OnceOptions {
@@ -25,6 +25,12 @@ export async function runOnce(prompt: string, opts: OnceOptions = {}): Promise<n
     return 1;
   }
 
+  let streamed = '';
+  const onStatus = (msg: string) => {
+    if (/^Done in /.test(msg)) return; // loop's own status — CLI prints its own summary
+    console.log(c.gray('· ' + msg));
+  };
+
   const loop = new AgentLoop({
     provider: runtime.provider,
     tools: runtime.tools,
@@ -32,8 +38,11 @@ export async function runOnce(prompt: string, opts: OnceOptions = {}): Promise<n
     project: runtime.project,
     session: runtime.session,
     undo: runtime.undo,
-    onStatus: (msg) => console.log(c.gray('· ' + msg)),
-    onStream: (text) => stdout.write(text),
+    onStatus,
+    onStream: (text) => {
+      streamed += text;
+      stdout.write(text);
+    },
     askPermission: runtime.ask,
   });
 
@@ -42,16 +51,23 @@ export async function runOnce(prompt: string, opts: OnceOptions = {}): Promise<n
   const executionTimeMs = Date.now() - startedAt;
   console.log('');
 
+  // When nothing was streamed (e.g. a provider error), print the final text.
+  // Skip the iteration-limit case — the summary already shows a yellow hint.
+  if (result.finalText && !streamed && !result.reachedLimit) {
+    console.log(c.red(result.finalText));
+    console.log('');
+  }
+
   const lines: string[] = [];
   if (result.changedFiles.length > 0) lines.push(c.bold('Changed files:') + ' ' + result.changedFiles.join(', '));
-  lines.push(c.dim(`${result.iterations} iteration(s) · ${result.toolCalls} tool call(s)`));
+  lines.push(c.dim(`${result.iterations} iteration(s) · ${result.toolCalls} tool call(s) · ${formatDuration(executionTimeMs)}`));
   if (result.usage) lines.push(c.dim(`tokens: ${result.usage.inputTokens} in · ${result.usage.outputTokens} out`));
   if (result.reachedLimit) lines.push(c.yellow('Iteration limit reached — rerun to continue.'));
   console.log(lines.join('\n'));
 
-  // Milestone 11-12: report usage when authenticated. Awaited (bounded by the
-  // reporter's short timeout) so the process exits cleanly; a backend outage
-  // degrades to a quick 'failed' and never breaks the run.
+  // Report usage when authenticated. Awaited (bounded by the reporter's short
+  // timeout) so the process exits cleanly; a backend outage degrades to a quick
+  // 'failed' and never breaks the run.
   if (runtime.provider) {
     const outcome = await reportRunUsage({
       prompt,

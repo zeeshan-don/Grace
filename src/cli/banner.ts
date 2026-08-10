@@ -1,28 +1,51 @@
 import { DISPLAY_NAME, TAGLINE, VERSION } from '../meta.ts';
 import { c } from './colors.ts';
 
-const W = 54; // inner box width
+/**
+ * Original ZEESH AI wordmark (hand-rendered block letters). Deliberately our
+ * own branding — no third-party ASCII art.
+ */
+const ART = [
+  '███████╗███████╗███████╗███████╗██╗  ██╗',
+  '╚══███╔╝██╔════╝██╔════╝██╔════╝██║  ██║',
+  '  ███╔╝ █████╗  █████╗  ███████╗███████║',
+  ' ███╔╝  ██╔══╝  ██╔══╝  ╚════██║██╔══██║',
+  '███████╗███████╗███████╗███████║██║  ██║',
+  '╚══════╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝',
+] as const;
 
-function boxLine(inner: string): string {
-  return c.cyan('│') + inner.padEnd(W) + c.cyan('│');
+export interface BannerInfo {
+  /** Project type + path, e.g. "node · ~/dev/app". */
+  project: string;
+  /** Provider + model, or a warning when unavailable. */
+  provider: string;
+  /** Auth/session status, e.g. "logged in as dev@example.com". */
+  session: string;
 }
 
-export function renderBanner(projectLabel: string, providerStatus: string): string {
-  const top = c.cyan('╭' + '─'.repeat(W) + '╮');
-  const bottom = c.cyan('╰' + '─'.repeat(W) + '╯');
-  const lines = [
-    top,
-    boxLine('  ' + c.bold(DISPLAY_NAME) + '  ' + c.dim(`v${VERSION}`)),
-    boxLine('  ' + c.dim(TAGLINE)),
-    boxLine(''),
-    boxLine('  ' + c.dim('Free AI coding — supported by developer-focused')),
-    boxLine('  ' + c.dim('advertising (coming soon)')),
-    boxLine(''),
-    boxLine('  ' + projectLabel),
-    boxLine('  ' + providerStatus),
-    bottom,
-  ];
-  return lines.join('\n');
+const W = 64; // status panel width
+
+function divider(): string {
+  return '─'.repeat(W);
+}
+
+function row(label: string, value: string): string {
+  return `  ${c.dim(label.padEnd(10))}${value}`;
+}
+
+export function renderBanner(info: BannerInfo): string {
+  const art = ART.map((line) => '  ' + c.cyan(line)).join('\n');
+  const head = `  ${c.bold(c.cyan(DISPLAY_NAME))} · ${c.dim(TAGLINE)} · ${c.dim(`v${VERSION}`)}`;
+  return [
+    art,
+    head,
+    `  ${c.dim(divider())}`,
+    row('Directory', info.project),
+    row('Provider', info.provider),
+    row('Session', info.session),
+    `  ${c.dim(divider())}`,
+    `  ${c.dim('Enter a coding task or / for commands')}  ${c.dim('(e.g. /help · /exit)')}`,
+  ].join('\n');
 }
 
 export function renderHelp(): string {
@@ -39,11 +62,13 @@ export function renderHelp(): string {
     c.dim('  /login               Log in to the ZEESH AI backend'),
     c.dim('  /logout              Log out and remove the local session'),
     c.dim('  /whoami              Show the authenticated identity'),
-    c.dim('  /exit                Quit (Ctrl+C / Ctrl+D also work)'),
+    c.dim('  /exit                Quit the session (also /quit, Ctrl+C, Ctrl+D)'),
     '',
     c.bold('Usage'),
     c.dim('  Type a task in plain English and the agent will inspect the repo,'),
     c.dim('  edit files, run tests, fix errors and report what changed.'),
+    c.dim('  After a task finishes you return to the prompt — just keep typing.'),
+    c.dim('  Multiline tasks: end a line with \\ to continue on the next line.'),
     '',
     c.bold('One-shot mode'),
     c.dim('  zeesh "Fix the login bug"   runs once and exits'),

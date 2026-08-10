@@ -24,6 +24,15 @@ export function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Render an elapsed duration compactly, e.g. 312ms, 4.2s, 1m 12s. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const m = Math.floor(seconds / 60);
+  return `${m}m ${Math.round(seconds % 60)}s`;
+}
+
 /** Render an absolute path relative to the user's home directory (or as-is). */
 export function shortPath(p: string, home: string): string {
   if (p === home) return '~';
