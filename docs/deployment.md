@@ -24,16 +24,25 @@ talks to this backend only for accounts + usage reporting (`zeesh login`).
 The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
 `src/` with esbuild, so the built `dist/` is **not** part of the deployment.
 
-> **ZEESH AI is not a static site.** `vercel.json` pins `"framework": null`
-> and `"outputDirectory": null` and declares the `api/**/*.ts` serverless
-> functions — this is the correct, current config format (the legacy `builds`
-> array in `vercel.json` is deprecated).
+> **ZEESH AI is not a static site.** `vercel.json` pins `"framework": null`,
+> **omits `outputDirectory` entirely** and declares the `api/**/*.ts`
+> serverless functions — this is the correct, current config format (the
+> legacy `builds` array in `vercel.json` is deprecated).
+>
+> **Never set an `outputDirectory` for an API-only project** — and in
+> particular never set it to `""` (empty string). `"outputDirectory": ""`
+> tells Vercel the repo root is static output; the deployment goes into
+> static-file mode, the zero-config serverless routes are never registered,
+> and every request (e.g. `GET /api/health`) returns Vercel's platform-level
+> **`NOT_FOUND`** 404 page (<https://vercel.com/docs/errors/not_found.md>)
+> instead of reaching your handlers. The correct `vercel.json` has **no**
+> `outputDirectory` key at all.
 >
 > **However, Vercel dashboard Project Settings take precedence over
 > `vercel.json`.** When the project is created with no framework detected
 > (the "Other" preset), Vercel stores `Output Directory: public` in the
-> project settings. Because that stored setting wins over the
-> `outputDirectory: null` in `vercel.json`, every build fails with
+> project settings. Because that stored setting wins over the absent
+> `outputDirectory` in `vercel.json`, every build fails with
 > *"No Output Directory named 'public' found"* — `vercel.json` **cannot**
 > override it.
 >
@@ -42,7 +51,9 @@ The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
 > then redeploy. Do **not** create a `public/` folder, and do not set an
 > Output Directory for an API-only project. If the project is not created
 > yet, when the CLI proposes `Output Directory: public`, decline/override it
-> and leave the field empty.
+> and leave the field empty. If instead you hit the `NOT_FOUND` page above,
+> the fix is the same: ensure `vercel.json` has no `outputDirectory` key,
+> clear the dashboard field, and redeploy with `vercel --prod`.
 
 ## 2. Neon setup
 
