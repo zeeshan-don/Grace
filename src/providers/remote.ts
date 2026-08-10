@@ -2,7 +2,7 @@
  * Client-side remote provider (Milestone 11 wiring).
  *
  * When the CLI has no local GROQ_API_KEY but the user is logged in, agent runs
- * are proxied to the ZEESH AI backend (`POST /api/provider`), where the
+ * are proxied to the GRACE backend (`POST /api/provider`), where the
  * production provider key lives — it never reaches the CLI. This provider
  * implements the same `AIProvider` contract as the local Groq provider, so
  * AgentLoop and the CLI are unchanged.
@@ -32,7 +32,7 @@ export interface RemoteProviderOptions {
   timeoutMs?: number;
 }
 
-/** An error from the ZEESH AI backend (status 0 = unreachable/timeout). */
+/** An error from the GRACE backend (status 0 = unreachable/timeout). */
 export class RemoteProviderError extends Error {
   readonly status: number;
 
@@ -51,7 +51,10 @@ interface ProviderResponse {
   tool_calls?: ToolCallParam[];
   usage?: Usage;
   finish_reason?: string;
-  /** ZEESH FREE session state; `startedNew` is set when this request rolled the user into a fresh session. */
+  /** Provider that actually served the request (after server-side router fallback). */
+  provider_id?: string;
+  provider_label?: string;
+  /** GRACE FREE session state; `startedNew` is set when this request rolled the user into a fresh session. */
   session?: DailySessionState & { startedNew?: boolean };
 }
 
@@ -60,13 +63,14 @@ export type LastSessionInfo = DailySessionState & { startedNew?: boolean };
 
 export class RemoteProvider implements AIProvider {
   readonly id = 'remote';
-  readonly label = 'ZEESH AI backend';
+  readonly label = 'GRACE backend';
 
   private readonly apiUrl: string;
   private readonly token: string;
   private readonly timeoutMs: number;
   private modelId: string;
   private sessionInfo: LastSessionInfo | null = null;
+  private serverProviderInfo: { id: string; label: string } | null = null;
 
   constructor(opts: RemoteProviderOptions) {
     this.apiUrl = opts.apiUrl.replace(/\/+$/, '');
@@ -76,12 +80,21 @@ export class RemoteProvider implements AIProvider {
   }
 
   /**
-   * Free-plan state from the most recent provider response (ZEESH FREE).
+   * Free-plan state from the most recent provider response (GRACE FREE).
    * Null until the first response that carries session state, or when the
    * backend predates the session system.
    */
   get lastSession(): LastSessionInfo | null {
     return this.sessionInfo;
+  }
+
+  /**
+   * Provider the backend router actually served (e.g. NVIDIA NIM), reported by
+   * the server after the first successful request. Null for local providers or
+   * backends that predate provider reporting — /model then shows the transport.
+   */
+  get serverProvider(): { id: string; label: string } | null {
+    return this.serverProviderInfo;
   }
 
   getModel(): ModelInfo {
@@ -104,6 +117,9 @@ export class RemoteProvider implements AIProvider {
   async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<ChatResult> {
     const data = await this.post(messages, options);
     if (data?.session) this.sessionInfo = data.session;
+    if (data?.provider_id) {
+      this.serverProviderInfo = { id: data.provider_id, label: data.provider_label ?? data.provider_id };
+    }
     return {
       content: data?.content ?? null,
       toolCalls: data?.tool_calls ?? [],
@@ -159,22 +175,22 @@ export class RemoteProvider implements AIProvider {
       throw new RemoteProviderError(res.status, this.describeError(res.status, data?.error, data?.code));
     }
     if (data === null) {
-      throw new RemoteProviderError(res.status, 'The ZEESH AI backend returned an invalid response.');
+      throw new RemoteProviderError(res.status, 'The GRACE backend returned an invalid response.');
     }
     return data;
   }
 
   private describeError(status: number, error?: string, code?: string): string {
     if (status === 401) {
-      return 'Your ZEESH AI session is invalid or expired — run "zeesh login" again.';
+      return 'Your GRACE session is invalid or expired — run "grace login" again.';
     }
     if (status === 429) {
       if (code === 'daily_limit_exhausted') {
         // The server's message is the authoritative, user-safe text.
         return error ?? 'You have used all free sessions for today.';
       }
-      return 'The ZEESH AI backend rate limit was hit — wait a moment and retry.';
+      return 'The GRACE backend rate limit was hit — wait a moment and retry.';
     }
-    return error ? `${error} (status ${status})` : `The ZEESH AI backend returned status ${status}.`;
+    return error ? `${error} (status ${status})` : `The GRACE backend returned status ${status}.`;
   }
 }

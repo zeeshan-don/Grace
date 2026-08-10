@@ -1,5 +1,5 @@
 /**
- * Route handlers for the ZEESH AI API (Milestones 10–11).
+ * Route handlers for the GRACE API (Milestones 10–11).
  *
  * Handlers use the (req, res) signature of Vercel's Node.js runtime, so they
  * can be exported directly from `api/*.ts` entrypoints. The local dev server
@@ -75,7 +75,7 @@ export const registerHandler: ApiHandler = async (req, res) => {
   const access = betaAccessFor(normalizedEmail || email);
   if (normalizedEmail && password.length >= 8 && !access.allowed) {
     return res.status(403).json({
-      error: 'ZEESH AI is in a closed beta. Registration is currently by invitation only.',
+      error: 'GRACE is in a closed beta. Registration is currently by invitation only.',
     });
   }
 
@@ -184,7 +184,7 @@ async function listUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
   const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 100) : 20;
   try {
     const rows = await new UsageService(db).recentUsageForUser(auth.user.id, limit);
-    // ZEESH FREE: the daily session summary (Milestone 13) rides along so the
+    // GRACE FREE: the daily session summary (Milestone 13) rides along so the
     // CLI can render "Session X / 6 · time remaining · today's usage" without
     // trusting any client-side state. getState is read-only — it never starts
     // or consumes a session.
@@ -217,7 +217,7 @@ export const providerHandler: ApiHandler = async (req, res) => {
     return res.status(400).json({ error: '"messages" must be a non-empty array.' });
   }
 
-  // ZEESH FREE (Milestone 13): the free-plan gate is authoritative and runs
+  // GRACE FREE (Milestone 13): the free-plan gate is authoritative and runs
   // BEFORE any provider call, so exhausted/expired accounts never reach the
   // model. An expired session with quota left auto-starts the next one; the
   // response tells the CLI a new session began (session.startedNew).
@@ -237,6 +237,10 @@ export const providerHandler: ApiHandler = async (req, res) => {
     tool_calls: outcome.result.toolCalls,
     usage: outcome.result.usage,
     finish_reason: outcome.result.finishReason,
+    // Which provider actually served the request (after router fallback), so
+    // the CLI can show e.g. "Provider: NVIDIA NIM" without any key.
+    provider_id: outcome.providerId,
+    provider_label: outcome.providerLabel,
     // The current free-plan state (and whether this request rolled the user
     // into a fresh session) so the CLI can render the quota line.
     session: { ...gate.state, startedNew: gate.startedNew },

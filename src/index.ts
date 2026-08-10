@@ -13,6 +13,7 @@ type Subcommand = 'login' | 'register' | 'logout' | 'whoami';
 interface ParsedArgs {
   yes: boolean;
   model?: string;
+  verbose: boolean;
   help: boolean;
   version: boolean;
   subcommand?: Subcommand;
@@ -22,7 +23,7 @@ interface ParsedArgs {
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
-  const out: ParsedArgs = { yes: false, help: false, version: false };
+  const out: ParsedArgs = { yes: false, help: false, version: false, verbose: false };
   let i = 0;
   while (i < argv.length) {
     const a = argv[i] as string;
@@ -31,6 +32,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (a === '--model') {
       out.model = argv[i + 1];
       i += 1;
+    } else if (a === '--verbose') {
+      out.verbose = true;
     } else if (a === '--help' || a === '-h') {
       out.help = true;
     } else if (a === '--version' || a === '-v') {
@@ -73,10 +76,10 @@ async function main(): Promise<void> {
     return;
   }
   if (args.prompt) {
-    process.exitCode = await runOnce(args.prompt, { yes: args.yes, model: args.model });
+    process.exitCode = await runOnce(args.prompt, { yes: args.yes, model: args.model, verbose: args.verbose });
     return;
   }
-  process.exitCode = await runRepl({ yes: args.yes, model: args.model });
+  process.exitCode = await runRepl({ yes: args.yes, model: args.model, verbose: args.verbose });
   void cwd;
 }
 
@@ -98,22 +101,24 @@ function usage(): string {
     `${PRODUCT} v${VERSION} — ${TAGLINE}`,
     '',
     'Usage:',
-    '  zeesh                            Start the interactive REPL',
-    '  zeesh "describe a task"          One-shot run, then exit',
-    '  zeesh login [email]              Log in to the ZEESH AI backend',
-    '  zeesh register [email]           Create an account',
-    '  zeesh logout                     Log out and remove the local session',
-    '  zeesh whoami                     Show the authenticated identity',
+    '  grace                            Start the interactive REPL',
+    '  grace "describe a task"          One-shot run, then exit',
+    '  grace login [email]              Log in to the GRACE backend',
+    '  grace register [email]           Create an account',
+    '  grace logout                     Log out and remove the local session',
+    '  grace whoami                     Show the authenticated identity',
     '',
     'Options:',
     '  --model <id>     Override the model (e.g. openai/gpt-oss-120b)',
     '  --yes, -y        Auto-approve flagged commands (dangerous!)',
+    '  --verbose        Show verbose diagnostics (raw output, agent details)',
     '  --help, -h       Show this help',
     '  --version, -v    Show version',
     '',
     'Environment:',
     '  GROQ_API_KEY     Your Groq API key (optional when logged in — the backend provides the model)',
-    '  ZEESH_API_URL    ZEESH AI backend URL (default http://localhost:8787)',
+    '  NVIDIA_API_KEY   Server-side only (Vercel env) — never needed on the CLI',
+    '  ZEESH_API_URL    GRACE backend URL (default http://localhost:8787)',
     '  ZEESH_SHELL      Override the shell used by run_command',
     '  NO_COLOR         Disable ANSI colors',
   ].join('\n');

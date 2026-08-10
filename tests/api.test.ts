@@ -6,7 +6,9 @@ import { setDbForTests, type Db, type Row } from '../src/api/db.ts';
 import { runServerChat, createServerProvider } from '../src/api/providers.ts';
 import { resetRateLimiters } from '../src/api/rateLimit.ts';
 import { createApiServer } from '../src/api/server.ts';
+import { ProviderError } from '../src/providers/errors.ts';
 import { GroqProvider } from '../src/providers/groq.ts';
+import { NvidiaProvider } from '../src/providers/nvidia.ts';
 import { UsageError, UsageService } from '../src/api/usage.ts';
 import type { UsageReport } from '../src/api/usage.ts';
 import { createMemoryDb } from './helpers/memoryDb.ts';
@@ -14,6 +16,7 @@ import { createMemoryDb } from './helpers/memoryDb.ts';
 after(() => {
   delete process.env.DATABASE_URL;
   delete process.env.GROQ_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
   delete process.env.ZEESH_AUTH_RATE_LIMIT_MAX;
   delete process.env.ZEESH_API_RATE_LIMIT_MAX;
   setDbForTests(null);
@@ -23,6 +26,7 @@ after(() => {
 afterEach(() => {
   delete process.env.DATABASE_URL;
   delete process.env.GROQ_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
   delete process.env.ZEESH_AUTH_RATE_LIMIT_MAX;
   delete process.env.ZEESH_API_RATE_LIMIT_MAX;
   setDbForTests(null);
@@ -510,20 +514,58 @@ test('runServerChat forwards tools to the provider options (agent tool calls wor
   }
 });
 
-test('POST /api/provider refuses when the server key is missing', async () => {
+test('POST /api/provider refuses when no server key is configured', async () => {
   delete process.env.GROQ_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
   const mem = createMemoryDb();
   setDbForTests(mem.db);
   const { server, baseUrl } = await startServer();
   try {
     const token = await registerSession(baseUrl);
-    const { status } = await request(baseUrl, '/api/provider', {
+    const { status, body } = await request(baseUrl, '/api/provider', {
       method: 'POST',
       body: { messages: [{ role: 'user', content: 'hi' }] },
       token,
     });
     assert.equal(status, 503);
+    assert.match((body as { error: string }).error, /NVIDIA_API_KEY/);
   } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
+test('POST /api/provider falls back NVIDIA → Groq and reports the serving provider', async () => {
+  process.env.NVIDIA_API_KEY = 'nvapi_fake_key_for_tests';
+  process.env.GROQ_API_KEY = 'gsk_fake_key_for_tests';
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  const originalN = NvidiaProvider.prototype.chat;
+  const originalG = GroqProvider.prototype.chat;
+  NvidiaProvider.prototype.chat = (async () => {
+    throw new ProviderError('nvidia', 'rate_limit', 'nvidia rate limited', 429);
+  }) as typeof NvidiaProvider.prototype.chat;
+  GroqProvider.prototype.chat = (async () => ({
+    content: 'served by groq',
+    toolCalls: [],
+    finishReason: 'stop',
+  })) as typeof GroqProvider.prototype.chat;
+  try {
+    const token = await registerSession(baseUrl);
+    const { status, body } = await request(baseUrl, '/api/provider', {
+      method: 'POST',
+      body: { messages: [{ role: 'user', content: 'hi' }] },
+      token,
+    });
+    assert.equal(status, 200);
+    const b = body as { content: string; provider_id: string; provider_label: string };
+    assert.equal(b.content, 'served by groq');
+    assert.equal(b.provider_id, 'groq', 'the fallback provider is reported to the CLI');
+    assert.ok(b.provider_label.length > 0);
+  } finally {
+    NvidiaProvider.prototype.chat = originalN;
+    GroqProvider.prototype.chat = originalG;
     setDbForTests(null);
     server.close();
   }

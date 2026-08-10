@@ -1,5 +1,5 @@
 /**
- * Local dev server for the ZEESH AI API (Milestone 10).
+ * Local dev server for the GRACE API (Milestone 10).
  *
  *   npm run serve        → http://localhost:8787
  *   curl localhost:8787/api/health
@@ -35,6 +35,6 @@ if (isMain) {
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const server = startApiServer(port);
   server.on('listening', () => {
-    console.log(`ZEESH AI API listening on http://localhost:${port}  (Ctrl+C to stop)`);
+    console.log(`GRACE API listening on http://localhost:${port}  (Ctrl+C to stop)`);
   });
 }

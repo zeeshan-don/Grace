@@ -1,14 +1,14 @@
-# ZEESH AI API (Milestones 10–12)
+# GRACE API (Milestones 10–12)
 
 The cloud backend foundation for accounts, usage tracking, model routing and
 the ad-supported free business model.
 
 ```
-LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI providers
+LOCAL CLI  →  GRACE API  →  Vercel  →  Neon PostgreSQL  →  AI providers
 ```
 
 The local CLI keeps working offline with its own local Groq key; once the user
-runs `zeesh login`, the CLI also authenticates to this API and reports usage
+runs `grace login`, the CLI also authenticates to this API and reports usage
 (and can proxy model calls through it). **Deployment is documented and ready**
 (see `docs/deployment.md`) but has not been performed yet — no credentials are
 available in this environment.
@@ -24,15 +24,19 @@ available in this environment.
     (`sessions.ts`).
   - `rateLimit.ts` — sliding-window rate limiter (auth + API scopes; fails
     safe: invalid env config falls back to sane defaults).
-  - `providers.ts` — server-side provider layer (`GROQ_API_KEY` never leaves
-    the server; provider failures return a generic message to clients).
+  - `providers.ts` — server-side provider layer / Model Router
+    (`createServerRouter`): NVIDIA NIM primary → Groq fallback, built per
+    request. Provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`) never leave the
+    server; failures are classified (`authentication` / `rate_limit` /
+    `timeout` / `unavailable_model` / `malformed_response` / `network`) and
+    returned to clients as secret-safe messages.
   - `middleware.ts` — `withHttp`: CORS + preflight, secret-safe 500s and
     request logging, applied on Vercel (`api/*.ts`) and locally (`router.ts`).
   - `beta.ts` — closed-beta gate (`ZEESH_BETA_MODE` / `ZEESH_BETA_ALLOWLIST`).
   - `log.ts` — safe request logging (secrets scrubbed before output).
   - `db.ts` — Neon PostgreSQL client (`DATABASE_URL`), created lazily.
   - `usage.ts` — usage-recording service (`agent_runs` + `usage` rows).
-  - `freeSessions.ts` — ZEESH FREE daily session service (6 sessions/day × 60
+  - `freeSessions.ts` — GRACE FREE daily session service (6 sessions/day × 60
     min, server-enforced; `free_sessions` table, migration `004_free_sessions.sql`).
   - `router.ts` + `server.ts` — local dev server over `node:http`.
 - `api/*.ts` and `api/auth/*.ts` — thin Vercel zero-config serverless functions
@@ -123,7 +127,7 @@ usage row).
 ### GET /api/usage
 
 `Authorization: Bearer <token>` → `200` with the authenticated user's recent
-rows (`?limit=`, default 20, max 100) **plus the ZEESH FREE daily session
+rows (`?limit=`, default 20, max 100) **plus the GRACE FREE daily session
 state** (Milestone 13):
 
 ```json
@@ -154,7 +158,24 @@ files can never reset the limit.
 }
 ```
 
-`200` → `{ "content": "…", "tool_calls": [], "usage": {…}, "finish_reason": "stop", "session": { … } }`.
+`200` → `{ "content": "…", "tool_calls": [], "usage": {…}, "finish_reason": "stop", "provider_id": "nvidia", "provider_label": "NVIDIA NIM", "session": { … } }`.
+
+The response also reports which provider **actually served** the request
+(`provider_id` / `provider_label`, after router fallback) so the CLI can show
+`Provider: NVIDIA NIM` without ever seeing a key.
+
+**Provider failures** are classified and mapped to safe responses:
+
+| Failure | Response |
+| ------- | -------- |
+| authentication (bad server-side key) | `502` — "rejected the server-side API key" |
+| rate limit | `429` — wait and retry |
+| timeout | `504` — retry |
+| unavailable model | `502` — pick a different model |
+| malformed response / network / other | `502` — generic retry hint |
+
+Error text is server-authored and never contains a provider key; raw provider
+detail is scrubbed (`nvapi-…`, `sk-…`, `gsk_…`) before it reaches logs.
 
 **Free-plan gate (Milestone 13):** before any model call, the server runs the
 daily session gate (`src/api/freeSessions.ts`):
@@ -173,7 +194,7 @@ The response embeds the same state as `GET /api/usage` (`sessionsUsed`,
 
 ## Authentication model
 
-- The client (`zeesh login`) sends email + password over HTTPS; the server
+- The client (`grace login`) sends email + password over HTTPS; the server
   verifies the scrypt hash and returns an opaque session token.
 - The CLI stores the token locally (`~/.zeesh/auth.json`, mode 0600) and
   sends it as `Authorization: Bearer <token>`. The raw token is never stored
@@ -183,8 +204,8 @@ The response embeds the same state as `GET /api/usage` (`sessionsUsed`,
 
 ## Free plan — daily sessions (Milestone 13)
 
-ZEESH FREE quotas are **backend-authoritative**. See the
-[Free plan section in the README](../README.md#free-plan--daily-sessions-milestone-13-zeesh-free)
+GRACE FREE quotas are **backend-authoritative**. See the
+[Free plan section in the README](../README.md#free-plan--daily-sessions-milestone-13-grace-free)
 for the product rules; the API surface is:
 
 - `free_sessions` rows (Neon, `004_free_sessions.sql`): `user_id`, UTC `day`,
@@ -218,7 +239,8 @@ local agent. A shared store (Redis/Upstash) is recommended before public beta
 
 | Variable | Where | Purpose |
 | -------- | ----- | ------- |
-| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side key for `/api/provider` |
+| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **fallback** provider for `/api/provider` |
+| `NVIDIA_API_KEY` | API only | Server-side **primary** provider (NVIDIA NIM) for `/api/provider` — never sent to the CLI |
 | `DATABASE_URL` | API only | Neon PostgreSQL connection string (required for auth + usage) |
 | `ZEESH_API_URL` | CLI only | Backend URL the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
 | `ZEESH_BETA_MODE` | API only | `closed` gates registration behind the allowlist (default `open`) |
@@ -244,8 +266,8 @@ curl -X POST -H "Content-Type: application/json" \
      http://localhost:8787/api/auth/register
 
 # or let the CLI do it (prompts for email/password, hides the password):
-zeesh login
-zeesh whoami
+grace login
+grace whoami
 ```
 
 The CLI reports usage automatically after each agent run while logged in.
@@ -264,7 +286,8 @@ Notes:
   explicit `.ts` extensions, which esbuild resolves.
 - The CLI's `dist/` is irrelevant to Vercel — only `api/`, `src/` and
   `package.json` are needed.
-- Do **not** put `GROQ_API_KEY` in any client-facing environment.
+- Do **not** put `GROQ_API_KEY` or `NVIDIA_API_KEY` in any client-facing
+  environment.
 - Every function exports `withHttp(handler)`, so CORS, preflight, safe errors
   and request logging behave identically to the local dev server.
 - The in-memory rate limiter resets per cold start; move to Redis/Upstash
@@ -272,8 +295,8 @@ Notes:
 
 ## Security notes (current state)
 
-- Provider keys and `DATABASE_URL` are server-side only and never reach the
-  CLI or browser.
+- Provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`) and `DATABASE_URL` are
+  server-side only and never reach the CLI or browser.
 - Passwords are scrypt-hashed with a per-user salt; plaintext is never stored,
   logged, or returned.
 - Sessions store only the SHA-256 hash of the token; tokens expire after 30

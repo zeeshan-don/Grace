@@ -54,7 +54,7 @@ interface Accumulator {
 }
 
 /**
- * The ZEESH coordinator.
+ * The GRACE coordinator.
  *
  * Receives a task, plans which specialized agents are needed (and in what
  * order), executes the plan — running independent agents in parallel — and

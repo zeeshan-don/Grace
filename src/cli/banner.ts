@@ -1,60 +1,58 @@
 import { DISPLAY_NAME, TAGLINE, VERSION } from '../meta.ts';
 import { c } from './colors.ts';
+import { divider, kv } from './ui/box.ts';
+import { symbols, theme } from './ui/theme.ts';
 
 /**
- * Original ZEESH AI wordmark (hand-rendered block letters). Deliberately our
- * own branding — no third-party ASCII art.
+ * Session-start header (GRACE UI).
+ *
+ * Compact and scannable — no ASCII art:
+ *
+ *   GRACE
+ *   GRACE · AI Coding Agent · v0.1.0
+ *   ────────────────────────────────
+ *   Directory  D:\Projects\my-app
+ *   Provider   NVIDIA NIM
+ *   Model      qwen/qwen2.5-coder-32b-instruct
+ *   Session    logged in as user@example.com
+ *   ────────────────────────────────
  */
-const ART = [
-  '███████╗███████╗███████╗███████╗██╗  ██╗',
-  '╚══███╔╝██╔════╝██╔════╝██╔════╝██║  ██║',
-  '  ███╔╝ █████╗  █████╗  ███████╗███████║',
-  ' ███╔╝  ██╔══╝  ██╔══╝  ╚════██║██╔══██║',
-  '███████╗███████╗███████╗███████║██║  ██║',
-  '╚══════╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝',
-] as const;
 
 export interface BannerInfo {
-  /** Project type + path, e.g. "node · ~/dev/app". */
-  project: string;
-  /** Provider + model, or a warning when unavailable. */
+  /** Absolute (or ~-shortened) project directory. */
+  directory: string;
+  /** Provider label (or a warning when unavailable). */
   provider: string;
-  /** Auth/session status, e.g. "logged in as dev@example.com". */
+  /** Active model id (or '—'). */
+  model: string;
+  /** Auth/session status. */
   session: string;
-  /** ZEESH FREE daily session line (optional — hidden when absent). */
+  /** GRACE FREE daily session line (optional — hidden when absent). */
   freePlan?: string;
 }
 
-const W = 64; // status panel width
-
-function divider(): string {
-  return '─'.repeat(W);
-}
-
-function row(label: string, value: string): string {
-  return `  ${c.dim(label.padEnd(10))}${value}`;
-}
-
 export function renderBanner(info: BannerInfo): string {
-  const art = ART.map((line) => '  ' + c.cyan(line)).join('\n');
-  const head = `  ${c.bold(c.cyan(DISPLAY_NAME))} · ${c.dim(TAGLINE)} · ${c.dim(`v${VERSION}`)}`;
+  const sym = symbols();
+  const th = theme();
   const rows = [
-    row('Directory', info.project),
-    row('Provider', info.provider),
-    row('Session', info.session),
+    kv('Directory', th.path(info.directory)),
+    kv('Provider', th.provider(info.provider)),
+    kv('Model', th.model(info.model)),
+    kv('Session', info.session),
   ];
-  if (info.freePlan) rows.push(row('Free plan', info.freePlan));
+  if (info.freePlan) rows.push(kv('Free plan', info.freePlan));
   return [
-    art,
-    head,
+    `  ${c.bold(c.cyan('GRACE'))}`,
+    `  ${c.dim(`${DISPLAY_NAME} · ${TAGLINE} · v${VERSION}`)}`,
     `  ${c.dim(divider())}`,
     ...rows,
     `  ${c.dim(divider())}`,
-    `  ${c.dim('Enter a coding task or / for commands')}  ${c.dim('(e.g. /help · /exit)')}`,
+    `  ${c.dim(`Enter a coding task or / for commands`)}`,
   ].join('\n');
 }
 
 export function renderHelp(): string {
+  const sym = symbols();
   return [
     c.bold('Commands'),
     c.dim('  /help                Show this help'),
@@ -65,7 +63,8 @@ export function renderHelp(): string {
     c.dim('  /diff                Show current git changes (or agent-modified files)'),
     c.dim('  /clear               Wipe conversation history'),
     c.dim('  /undo                Revert the last file change made by the agent'),
-    c.dim('  /login               Log in to the ZEESH AI backend'),
+    c.dim('  /verbose             Toggle verbose diagnostics (raw output, details)'),
+    c.dim('  /login               Log in to the GRACE backend'),
     c.dim('  /logout              Log out and remove the local session'),
     c.dim('  /whoami              Show the authenticated identity'),
     c.dim('  /exit                Quit the session (also /quit, Ctrl+C, Ctrl+D)'),
@@ -74,10 +73,12 @@ export function renderHelp(): string {
     c.dim('  Type a task in plain English and the agent will inspect the repo,'),
     c.dim('  edit files, run tests, fix errors and report what changed.'),
     c.dim('  After a task finishes you return to the prompt — just keep typing.'),
-    c.dim('  Multiline tasks: end a line with \\ to continue on the next line.'),
+    c.dim('  Multiline tasks: end a line with \\\\ to continue on the next line.'),
     '',
     c.bold('One-shot mode'),
-    c.dim('  zeesh "Fix the login bug"   runs once and exits'),
-    c.dim('  zeesh --yes "…"             auto-approve flagged commands (careful!)'),
+    c.dim('  grace "Fix the login bug"   runs once and exits'),
+    c.dim('  grace --yes "…"             auto-approve flagged commands (careful!)'),
+    c.dim('  grace --verbose "…"         show raw diagnostics for this run'),
+    `  ${c.dim(`${sym.bullet} Progress marks: ${sym.check} done · ${sym.cross} failed · ${sym.warn} warning`)}`,
   ].join('\n');
 }

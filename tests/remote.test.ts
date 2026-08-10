@@ -5,7 +5,7 @@
  *   - resolveProvider picks the local Groq provider when a key exists and
  *     falls back to RemoteProvider when logged in without one.
  *
- * The mock HTTP server stands in for the ZEESH AI backend; no real network or
+ * The mock HTTP server stands in for the GRACE backend; no real network or
  * provider key is ever used.
  */
 import assert from 'node:assert/strict';
@@ -128,7 +128,18 @@ test('RemoteProvider.chat tolerates missing optional fields in the response', as
   assert.equal(provider.lastSession, null, 'no session field → nothing to display');
 });
 
-test('RemoteProvider captures the ZEESH FREE session state from the response', async () => {
+test('RemoteProvider captures the serving provider reported by the backend', async () => {
+  const mock = await startMock(() => ({
+    status: 200,
+    body: { content: 'ok', provider_id: 'nvidia', provider_label: 'NVIDIA NIM' },
+  }));
+  const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok' });
+  assert.equal(provider.serverProvider, null, 'unknown until the first successful response');
+  await provider.chat(msgs);
+  assert.deepEqual(provider.serverProvider, { id: 'nvidia', label: 'NVIDIA NIM' });
+});
+
+test('RemoteProvider captures the GRACE FREE session state from the response', async () => {
   const mock = await startMock(() => ({
     status: 200,
     body: {
@@ -219,7 +230,7 @@ test('RemoteProvider maps 401 (expired session) to a login hint', async () => {
   const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'stale' });
   await assert.rejects(
     () => provider.chat(msgs),
-    (err: unknown) => err instanceof RemoteProviderError && err.status === 401 && /zeesh login/.test(err.message),
+    (err: unknown) => err instanceof RemoteProviderError && err.status === 401 && /grace login/.test(err.message),
   );
 });
 

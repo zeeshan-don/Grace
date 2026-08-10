@@ -1,6 +1,6 @@
 # Subagent coordinator architecture (Milestone 14)
 
-The ZEESH coordinator decomposes every user task into a small plan of
+The GRACE coordinator decomposes every user task into a small plan of
 **specialized agents**, runs them with narrow context and narrow permissions,
 parallelizes independent work, and composes a concise final answer. This is an
 original implementation inspired by the Freebuff subagent model — it copies no
@@ -139,11 +139,20 @@ agent's `run_command`.
 ## Model routing
 
 `src/agents/modelRouter.ts`. Every spec carries a `modelTier`
-(`fast`/`default`/`strong`). Today all agents share the configured provider and
-model; the coordinator consults the router through a pluggable
+(`fast`/`default`/`strong`). A route resolves to `{ provider, model }`
+(`ModelRoute`). Today all agents share the configured provider and model; the
+coordinator consults the router through a pluggable
 `providerFactory(role, spec)`. To split models later (file-picker → fast
 model, thinker → strongest model), replace the factory/router — no agent code
-changes. `ZEESH_AGENT_MODEL` overrides the model for all roles (diagnostics).
+changes. `ZEESH_AGENT_MODEL` overrides the model for all roles and
+`ZEESH_PROVIDER` overrides the provider id (diagnostics/ops).
+
+The same abstraction drives the **server-side router**: the GRACE API's
+`/api/provider` builds its chain from `SERVER_ROUTING_PREFERENCE` (`nvidia`
+primary → `groq` fallback), each provider included only when its server-side
+key is configured. Fallback happens at the model-request boundary before any
+response is consumed, so it can never duplicate a tool execution — see
+`src/providers/fallback.ts` and `docs/api.md`.
 
 ## CLI UX
 
@@ -167,7 +176,7 @@ Session 1 / 6 · 41m 12s left · 12m / 6h used today
 ```
 
 Only progress lines and summaries are shown — never agent chain-of-thought.
-The final answer, changed files, run stats, ZEESH FREE quota line and usage
+The final answer, changed files, run stats, GRACE FREE quota line and usage
 reporting are identical in shape to the pre-coordinator CLI. Slash commands,
 the banner, and `/status` are unchanged.
 

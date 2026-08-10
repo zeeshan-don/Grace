@@ -1,5 +1,5 @@
 /**
- * Shared HTTP types for the ZEESH AI API layer (Milestone 10).
+ * Shared HTTP types for the GRACE API layer (Milestone 10).
  *
  * These mirror the subset of Vercel's Node.js serverless request/response API
  * that we use, so the same handlers run unchanged on Vercel (api/*.ts) and in

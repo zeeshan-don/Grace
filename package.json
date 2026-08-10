@@ -1,9 +1,10 @@
 {
-  "name": "zeesh",
+  "name": "grace",
   "version": "0.1.0",
-  "description": "ZEESH AI — a terminal AI coding agent that works inside your local codebase — free AI coding assistance, supported by developer-focused advertising (coming soon).",
+  "description": "GRACE — a terminal AI coding agent that works inside your local codebase — free AI coding assistance, supported by developer-focused advertising (coming soon).",
   "type": "module",
   "bin": {
+    "grace": "./dist/index.js",
     "zeesh": "./dist/index.js"
   },
   "main": "dist/index.js",

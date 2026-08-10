@@ -1,10 +1,10 @@
 /**
  * Local session persistence (Milestone 11).
  *
- * The session token from `zeesh login` is stored in `~/.zeesh/auth.json`
+ * The session token from `grace login` is stored in `~/.zeesh/auth.json`
  * with restrictive file permissions (0o600) so other OS users cannot read it.
  * The token is never logged, never sent to the model, and can be wiped with
- * `zeesh logout`.
+ * `grace logout`.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';

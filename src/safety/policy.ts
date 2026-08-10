@@ -99,6 +99,7 @@ export function redactSecrets(text: string): string {
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
     .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED]')
     .replace(/\bgsk_[A-Za-z0-9]{20,}\b/g, '[REDACTED]')
+    .replace(/\bnvapi-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED]')
     .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '[REDACTED]')
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]')
     .replace(/(xox[baprs]-)[A-Za-z0-9-]{10,}/g, '$1[REDACTED]')

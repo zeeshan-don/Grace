@@ -3,7 +3,7 @@ import type { Tool } from '../tools/registry.ts';
 import type { AgentRole, Capability } from './types.ts';
 
 /**
- * Capability → tool grants (ZEESH coordinator).
+ * Capability → tool grants (GRACE coordinator).
  *
  * The permission boundary is enforced HERE: an agent only ever receives the
  * tools its capabilities allow, so a read-only role physically cannot call

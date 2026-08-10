@@ -1,4 +1,4 @@
-# ZEESH AI
+# GRACE
 
 An AI coding agent that runs inside your local codebase.
 
@@ -8,7 +8,7 @@ advertising** (not yet implemented — see [Economics & Advertising](#economics-
 
 ```
 ╭──────────────────────────────────────────────────────╮
-│              ZEESH AI  v0.1.0                        │
+│              GRACE  v0.1.0                           │
 │              AI Coding Agent                         │
 │                                                      │
 │  Free AI coding — supported by developer-focused     │
@@ -17,8 +17,8 @@ advertising** (not yet implemented — see [Economics & Advertising](#economics-
 ```
 
 ```bash
-zeesh                  # interactive REPL
-zeesh "Fix the login bug in this project"   # one-shot run
+grace                  # interactive REPL
+grace "Fix the login bug in this project"   # one-shot run
 ```
 
 The agent inspects the repository, reads the relevant files, edits code, runs
@@ -29,11 +29,11 @@ or it needs your approval — then reports exactly what changed.
 Groq, agent loop, file tools, terminal execution, safety, git, provider
 abstraction), the cloud backend foundation (M10: Vercel-ready API, server-side
 provider keys, Neon schema + usage recording), real authentication
-(M11: user accounts + sessions, `zeesh login/logout/whoami`, resilient CLI→
+(M11: user accounts + sessions, `grace login/logout/whoami`, resilient CLI→
 backend usage reporting), closed-beta readiness (M12: production-safe
 migrations + indexes, auth/error hardening, CORS + preflight, secret-safe
 request logging, closed-beta registration gate, Vercel config, deployment + beta
-checklist docs), the ZEESH FREE daily session system (M13: 6 sessions/day ×
+checklist docs), the GRACE FREE daily session system (M13: 6 sessions/day ×
 60 minutes, enforced server-side in Neon with automatic session rollover) and
 the subagent coordinator (M14: 9 specialized agents + a central coordinator
 that plans, delegates with narrow context/permissions, runs independent agents
@@ -44,10 +44,23 @@ deployment is documented and ready (`docs/deployment.md`).
 
 ---
 
+## Why Grace?
+
+GRACE is inspired by Grace Hopper, a pioneer in computer programming who helped
+make programming languages more accessible to humans. The name carries that
+spirit: an AI coding agent that makes programming approachable for everyone.
+
+GRACE is an independent project and is not affiliated with, endorsed by, or
+sponsored by Grace Hopper, her estate, or any related organization.
+
+---
+
 ## Requirements
 
 - Node.js ≥ 23.6 (runs TypeScript directly via native type stripping)
 - A Groq API key — get one at <https://console.groq.com/>
+- Optional (backend only): an NVIDIA NIM API key for the server-side model
+  router — get one at <https://build.nvidia.com> (never needed on the CLI)
 
 ## Install & run (quick start)
 
@@ -57,23 +70,23 @@ type stripping).
 ```bash
 npm install
 npm run build
-npm link            # makes `zeesh` available globally
-zeesh
+npm link            # makes `grace` available globally
+grace
 ```
 
 Then configure your AI key (see below) and try your first task:
 
 ```bash
-zeesh "Create a small Node app with a /hello endpoint in this project"
-zeesh "Add a /health endpoint and a test for it"
+grace "Create a small Node app with a /hello endpoint in this project"
+grace "Add a /health endpoint and a test for it"
 ```
 
 Login is **optional** — local/offline use works without it:
 
 ```bash
-zeesh register    # create a ZEESH AI account (optional)
-zeesh login       # log in → automatic usage reporting to the backend
-zeesh whoami
+grace register    # create a GRACE account (optional)
+grace login       # log in → automatic usage reporting to the backend
+grace whoami
 ```
 
 ### Configuration
@@ -109,7 +122,8 @@ backend only — never exposed to clients:
 | Variable | Used by | Purpose |
 | -------- | ------- | ------- |
 | `DATABASE_URL` | API | Neon PostgreSQL connection string (accounts, sessions, usage tables) |
-| `GROQ_API_KEY` | CLI + API | Also used server-side so production keys never reach the CLI |
+| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **fallback** provider for `/api/provider` |
+| `NVIDIA_API_KEY` | API only | Server-side **primary** provider (NVIDIA NIM) for `/api/provider` — never sent to the CLI |
 | `ZEESH_API_URL` | CLI | Backend the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
 | `ZEESH_BETA_MODE` | API | `closed` gates registration behind the allowlist (default `open`) |
 | `ZEESH_BETA_ALLOWLIST` | API | Comma-separated emails allowed to register when closed |
@@ -132,7 +146,7 @@ favour of real per-user sessions.
 | `/diff`          | Show current git changes (or agent-modified files)        |
 | `/clear`         | Wipe conversation history                                 |
 | `/undo`          | Revert the agent's most recent file change                |
-| `/login`         | Log in to the ZEESH AI backend (usage reporting on)       |
+| `/login`         | Log in to the GRACE backend (usage reporting on)       |
 | `/logout`        | Log out and remove the local session                      |
 | `/whoami`        | Show the authenticated identity                           |
 | `/exit`          | Quit                                                      |
@@ -149,10 +163,10 @@ favour of real per-user sessions.
 ### Authentication (Milestone 11)
 
 ```bash
-zeesh register [email]   # create an account (password is hidden, ≥ 8 chars)
-zeesh login [email]      # log in — stores the session in ~/.zeesh/auth.json (0600)
-zeesh whoami             # show the authenticated identity
-zeesh logout             # invalidate the session server-side and remove it locally
+grace register [email]   # create an account (password is hidden, ≥ 8 chars)
+grace login [email]      # log in — stores the session in ~/.zeesh/auth.json (0600)
+grace whoami             # show the authenticated identity
+grace logout             # invalidate the session server-side and remove it locally
 ```
 
 The session token is persisted locally with restrictive file permissions and
@@ -171,7 +185,7 @@ flagged in `users.is_beta`. This is intentionally minimal: no dashboard, just
 accounts, usage, error logging and cost tracking to measure the economics
 before Milestones 15–16. Existing accounts are never locked out.
 
-### Free plan — daily sessions (Milestone 13, ZEESH FREE)
+### Free plan — daily sessions (Milestone 13, GRACE FREE)
 
 The free tier is enforced **entirely server-side** — the CLI never stores or
 trusts session state, so restarting it or deleting local files can never reset
@@ -196,6 +210,56 @@ State lives in Neon (`free_sessions`, migration `004_free_sessions.sql`); limits
 are tunable via `ZEESH_SESSIONS_PER_DAY` / `ZEESH_SESSION_DURATION_MINUTES`.
 Users with their own local `GROQ_API_KEY` are unaffected (they self-host and
 never hit `/api/provider`).
+
+### AI providers & model routing
+
+The backend routes each `/api/provider` request through a **Model Router**
+(`src/agents/modelRouter.ts` + `src/api/providers.ts`):
+
+```
+GRACE CLI
+    ↓
+Vercel /api/provider
+    ↓
+Model Router
+    ├── NVIDIA NIM   (primary — NVIDIA_API_KEY, default model qwen/qwen2.5-coder-32b-instruct)
+    └── Groq         (fallback — GROQ_API_KEY)
+```
+
+- **NVIDIA is primary** whenever `NVIDIA_API_KEY` is set server-side; Groq is
+  the automatic fallback whenever `GROQ_API_KEY` is set. Both keys can be set
+  at once; with only one key the chain is just that provider (Groq-only
+  deployments behave exactly as before). With neither, `/api/provider`
+  refuses with a clear 503.
+- **Safe fallback at the model-request boundary** — if NVIDIA fails (rate
+  limit, timeout, model unavailable, network, auth, malformed response), the
+  *same request* is retried on Groq **before any response is consumed**, so a
+  fallback can never duplicate a tool execution (tools run client-side only
+  after a successful response). We never retry after a partial response.
+- **Model selection** — the model id the CLI sends (configured via
+  `/model <id>` or `--model`) is passed to both providers. Set an
+  NVIDIA-hosted id (e.g. `qwen/qwen2.5-coder-32b-instruct` or
+  `deepseek-ai/deepseek-r1`) to run on NVIDIA; any id NVIDIA does not serve
+  falls through to Groq automatically.
+- **Provider status** — the backend reports which provider actually served
+  each request (`provider_id` / `provider_label`), and the CLI shows it:
+
+  ```
+  grace › /model
+  Provider: NVIDIA NIM via GRACE backend
+  Model:    qwen/qwen2.5-coder-32b-instruct
+  ```
+
+- **Failure taxonomy** — provider failures are classified
+  (`authentication` / `rate_limit` / `timeout` / `unavailable_model` /
+  `malformed_response` / `network`) and surfaced as secret-safe messages
+  (429 for rate limits, 504 for timeouts, 502 otherwise). API keys are never
+  included in errors, logs or responses — `nvapi-…` values are additionally
+  redacted by the log scrubber as defense in depth.
+- **Per-role routing (future)** — the `ModelRouter` maps `(role, tier) →
+  {provider, model}` (e.g. thinker → strongest reasoning model, file-picker
+  → fast model). Today every agent shares the runtime's provider/model — the
+  infrastructure is in place and no agent code needs to change.
 
 ### Subagent coordinator (Milestone 14)
 
@@ -260,7 +324,7 @@ tests" → just the Test Runner).
   "unavailable" cleanly instead of silently doing nothing.
 - **CLI UX** — concise progress only (`· Planning… → Project Scout → … → Done`),
   no chain-of-thought; the composed answer, changed files, stats and the
-  ZEESH FREE quota line are printed when the run finishes. Interactive and
+  GRACE FREE quota line are printed when the run finishes. Interactive and
   one-shot modes are unchanged.
 
 See [docs/coordinator.md](docs/coordinator.md) for the full architecture.
@@ -309,9 +373,9 @@ your request
 
 ```
 LOCAL CLI (works offline; reports usage when logged in)
-      │  (M11: zeesh login/logout/whoami → session token)
+      │  (M11: grace login/logout/whoami → session token)
       ▼
-ZEESH AI API (src/api + api/)   ← Vercel serverless · keys stay server-side
+GRACE API (src/api + api/)   ← Vercel serverless · keys stay server-side
       │                            (session auth, scrypt passwords, rate limits)
       ▼
 Neon PostgreSQL (DATABASE_URL)  ·  AI providers (src/providers)
@@ -322,8 +386,8 @@ CLI (src/cli)  →  AgentLoop (src/agent)  →  Tools (src/tools)  →  project 
               AIProvider (src/providers)     ← provider-agnostic
                      │
                      ▼
-               GroqProvider (implemented)
-               Gemini/Anthropic/OpenAI/NVIDIA/Ollama (extension points)
+               GroqProvider · NvidiaProvider (implemented)
+               Gemini/Anthropic/OpenAI/Ollama (extension points)
 ```
 
 Key directories:
@@ -336,7 +400,8 @@ src/
   agent/      loop.ts (reason→act→observe) · context.ts (token budget)
   tools/      read_file, write_file, edit_file, search_files,
               list_directory, run_command, git_diff, web_fetch
-  providers/  types.ts (AIProvider contract) · groq.ts · registry.ts
+  providers/  types.ts (AIProvider contract) · groq.ts · nvidia.ts · fallback.ts
+              · errors.ts (failure taxonomy) · registry.ts
   api/        backend (M10): handlers, server-side providers, usage,
               db (Neon), auth-ready guard, local dev server
   project/    detect.ts (type/framework/PM detection) · index.ts (repo index)
@@ -359,7 +424,7 @@ the ad-funded free tier. The local CLI is untouched and keeps working offline
 with its own local Groq key; logging in adds usage reporting.
 
 ```
-LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI providers
+LOCAL CLI  →  GRACE API  →  Vercel  →  Neon PostgreSQL  →  AI providers
 ```
 
 - **Real authentication (M11)** — user accounts (`users`) and sessions
@@ -379,8 +444,10 @@ LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI provide
   valid session and scope data to the authenticated user (a caller can no
   longer record or read another user's usage).
 - **Server-side provider layer** — `src/api/providers.ts` reuses the existing
-  `AIProvider` abstraction, but `GROQ_API_KEY` lives on the server so
-  production keys never reach the CLI or the browser.
+  `AIProvider` abstraction, but provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`)
+  live on the server so production keys never reach the CLI or the browser.
+  `createServerRouter` builds the Model Router chain (NVIDIA primary → Groq
+  fallback) per request; failures are classified and reported without secrets.
 - **Neon PostgreSQL** — `src/api/db.ts` connects via `DATABASE_URL` (lazily,
   so the API still boots without a database). Schema in
   `db/migrations/001_init.sql` … `004_free_sessions.sql`.
@@ -392,7 +459,7 @@ LOCAL CLI  →  ZEESH AI API  →  Vercel  →  Neon PostgreSQL  →  AI provide
   of 60 minutes per user per UTC day on the server (`free_sessions` table,
   race-safe via a unique constraint). `/api/provider` is gated before any model
   call; expired sessions auto-roll into the next one and a fully-used day gets
-  `429 daily_limit_exhausted`. See [Free plan — daily sessions](#free-plan--daily-sessions-milestone-13-zeesh-free).
+  `429 daily_limit_exhausted`. See [Free plan — daily sessions](#free-plan--daily-sessions-milestone-13-grace-free).
 
 Run it locally:
 
@@ -400,9 +467,9 @@ Run it locally:
 npm run serve                  # http://localhost:8787
 npm run smoke                  # scripted health + endpoint smoke test
 curl http://localhost:8787/api/health
-zeesh register               # create an account
-zeesh login                  # log in (usage reporting turns on)
-zeesh whoami
+grace register               # create an account
+grace login                  # log in (usage reporting turns on)
+grace whoami
 ```
 
 Deployment to Vercel is documented and ready (`docs/deployment.md` +
@@ -434,11 +501,11 @@ npm run build        # emit dist/
 | 6  | Automatic error fixing        | ✅ (part of the loop)        |
 | 7  | Safety / permissions          | ✅ (core gates)              |
 | 8  | Git integration               | ✅ (basic status/diff/log)   |
-| 9  | Provider abstraction          | ✅ (interface + Groq, more later) |
+| 9  | Provider abstraction          | ✅ (interface + Groq + NVIDIA NIM with router fallback) |
 | 10 | Backend + Neon                | ✅ (API, server-side providers, Neon schema + usage) |
 | 11 | Auth + usage tracking         | ✅ (user accounts + sessions, CLI login/logout/whoami, resilient usage reporting) |
 | 12 | Closed beta                   | ✅ (hardening, CORS, safe logging, closed-beta gate, Vercel config, deployment + beta checklist docs — deploy not yet performed) |
-| 13 | ZEESH FREE daily sessions     | ✅ (6 sessions/day × 60 min, server-enforced in Neon, auto-rollover, CLI quota display, tests — no ads, no fake numbers) |
+| 13 | GRACE FREE daily sessions     | ✅ (6 sessions/day × 60 min, server-enforced in Neon, auto-rollover, CLI quota display, tests — no ads, no fake numbers) |
 | 14 | Subagent coordinator          | ✅ (9 specialized agents + central coordinator: planning, narrow context + permissions, parallel delegation, failure recovery, project index, CLI progress UX — tests + docs) |
 | 15 | Measure real AI cost/user     | ⏳ (economics docs + `models` pricing table ready — needs live data) |
 | 16 | Advertising (after economics) | ⏳                          |
@@ -471,7 +538,7 @@ for it:
   Neon (`usage` + `agent_runs`, schema in `db/migrations/`) and estimates
   per-user AI cost via the `user_economics` view
   (`docs/database.md`, `docs/api.md`). The CLI reports usage to it after each
-  run whenever a session exists (`zeesh login`).
+  run whenever a session exists (`grace login`).
 - Ads must be developer-focused (cloud, hosting, dev tools, AI APIs, DBs) and
   must never use private source code, secrets, or user data.
 
@@ -483,7 +550,7 @@ for it:
   another message.
 - `run_command` on Windows uses `cmd.exe` by default; set `ZEESH_SHELL` to
   your shell of choice (e.g. `bash`) if you need POSIX builtins.
-- Usage reporting requires the user to log in (`zeesh login`); without a
+- Usage reporting requires the user to log in (`grace login`); without a
   session the CLI stays fully offline and records nothing.
 - The rate limiter is in-memory (per server instance) — a shared store
   (Redis/Upstash) is a closed-beta concern.

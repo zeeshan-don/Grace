@@ -1,7 +1,7 @@
 /**
  * CLI interactive + one-shot E2E tests (Milestone 12).
  *
- * A mock HTTP server stands in for the ZEESH AI backend so we can exercise
+ * A mock HTTP server stands in for the GRACE backend so we can exercise
  * the full agent loop (RemoteProvider → AgentLoop → tools → loop back) with
  * no real provider key.
  *
@@ -43,6 +43,9 @@ const ENV: Record<string, string> = {
   HOME: home,
   USERPROFILE: home,
   NO_COLOR: '1',
+  // Deterministic glyphs regardless of platform/TTY (the ASCII fallback path
+  // is covered by the dedicated ui tests).
+  ZEESH_UNICODE: '1',
   // Ensure no local key leaks from the test runner's environment.
   GROQ_API_KEY: '',
 };
@@ -65,7 +68,7 @@ afterEach(() => {
 type BackendMode = 'happy' | 'fail';
 
 /**
- * Start a mock ZEESH AI backend that responds to POST /api/provider.
+ * Start a mock GRACE backend that responds to POST /api/provider.
  *
  * - `happy`: first request returns a write_file tool call, second returns a
  *   completion message (simulating a real agent run).
@@ -94,7 +97,7 @@ function startBackend(mode: BackendMode): Promise<{ server: Server; baseUrl: str
           const toolCall: ToolCallParam = {
             id: 'call_1',
             name: 'write_file',
-            arguments: JSON.stringify({ path: 'hello.py', content: "print('hello from zeesh')\n" }),
+            arguments: JSON.stringify({ path: 'hello.py', content: "print('hello from grace')\n" }),
           };
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
@@ -220,7 +223,8 @@ test('one-shot: E2E with mock backend (agent loop writes hello.py)', async () =>
   assert.equal(code, 0, 'one-shot run completes successfully');
   // The agent loop exercised the real write_file tool → file exists.
   assert.ok(existsSync(join(work, 'hello.py')), 'agent wrote hello.py');
-  assert.match(stdout, /Changed files: hello\.py/);
+  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /iteration/);
   assert.match(stdout, /one-shot run/);
 });
@@ -231,7 +235,7 @@ test('interactive: starts with the banner and exits on EOF', async () => {
   clearSessionFile();
   const { code, stdout } = await runCli([]);
   assert.equal(code, 0, 'exits cleanly on EOF');
-  assert.match(stdout, /ZEESH AI/);
+  assert.match(stdout, /GRACE/);
   assert.ok(stdout.includes('Enter a coding task or / for commands'), 'shows the prompt hint');
   assert.match(stdout, /Goodbye/);
   assert.match(stdout, /Directory/);
@@ -271,14 +275,15 @@ test('interactive: full task flow with mock backend returns to the prompt', asyn
   assert.equal(code, 0, 'interactive session exits cleanly');
   // The agent loop created the file.
   assert.ok(existsSync(join(work, 'hello.py')), 'agent wrote hello.py via the existing tool loop');
-  assert.match(stdout, /Changed files: hello\.py/);
+  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /\+ hello\.py/);
   // The summary line includes elapsed time.
   assert.match(stdout, /iteration\(s\)/);
   // /status ran after the task → output contains project info.
   assert.match(stdout, /Not a git repository/);
   // The /status output appears after the task summary, proving we returned to
   // the prompt.
-  const summaryIdx = stdout.indexOf('Changed files: hello.py');
+  const summaryIdx = stdout.indexOf('Files changed');
   const statusIdx = stdout.indexOf('Not a git repository');
   assert.ok(summaryIdx !== -1 && statusIdx > summaryIdx, 'session continued after the task');
   assert.match(stdout, /Goodbye/);

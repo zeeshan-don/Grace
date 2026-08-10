@@ -167,7 +167,7 @@ export function createMemoryDb(): MemoryDb {
         }));
     }
 
-    // ---- FreeSessionService (ZEESH FREE, Milestone 13) --------------------
+    // ---- FreeSessionService (GRACE FREE, Milestone 13) --------------------
     if (sql.includes('INSERT INTO free_sessions')) {
       const [userId, day, sessionNumber, startedAt, expiresAt] = params as [
         string, string, number, string, string,

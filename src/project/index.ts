@@ -4,7 +4,7 @@ import { detectProject } from './detect.ts';
 import { walkFiles } from './walker.ts';
 
 /**
- * Lightweight repository index (Project Scout, ZEESH coordinator).
+ * Lightweight repository index (Project Scout, GRACE coordinator).
  *
  * Gives the coordinator structural knowledge of the repository (layout, key
  * files, entrypoints, test framework, important symbols) without re-reading

@@ -1,5 +1,5 @@
 /**
- * HTTP client for the ZEESH AI backend (Milestone 11).
+ * HTTP client for the GRACE backend (Milestone 11).
  *
  * The CLI talks to the backend only through this client. It never touches
  * GROQ_API_KEY, DATABASE_URL or any other server secret — the only credential
@@ -37,7 +37,7 @@ export interface SessionResult {
 }
 
 /**
- * ZEESH FREE daily session summary returned by GET /api/usage and embedded in
+ * GRACE FREE daily session summary returned by GET /api/usage and embedded in
  * POST /api/provider responses (mirrors src/api/freeSessions.ts
  * DailySessionState — keep both in sync).
  */
@@ -116,7 +116,7 @@ export class ApiClient {
   }
 
   /**
-   * Current free-plan session state (ZEESH FREE). The server is the source of
+   * Current free-plan session state (GRACE FREE). The server is the source of
    * truth — the CLI never stores or enforces sessions locally.
    */
   async getUsage(token: string): Promise<UsageStatusResult> {

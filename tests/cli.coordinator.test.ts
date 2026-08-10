@@ -31,6 +31,9 @@ const ENV: Record<string, string> = {
   HOME: home,
   USERPROFILE: home,
   NO_COLOR: '1',
+  // Deterministic glyphs regardless of platform/TTY (the ASCII fallback path
+  // is covered by the dedicated ui tests).
+  ZEESH_UNICODE: '1',
   GROQ_API_KEY: '',
 };
 
@@ -138,16 +141,20 @@ test('one-shot: coordinator progress lines appear and the task completes', async
 
   assert.equal(code, 0);
   assert.ok(existsSync(join(work, 'hello.py')), 'file written through the coordinator flow');
-  // Progress UX: agent labels with arrows, no raw chain-of-thought.
+  // Progress UX: agent labels with arrows, parallel steps as a tree, no raw
+  // chain-of-thought.
   assert.match(stdout, /→ Project Scout/);
   assert.match(stdout, /→ File Picker/);
   assert.match(stdout, /→ Editor/);
-  assert.match(stdout, /→ Test Runner/);
+  // Test Runner + Code Reviewer ran in parallel → drawn as a tree block.
+  assert.match(stdout, /┌─ Test Runner/);
+  assert.match(stdout, /└─ Code Reviewer/);
   assert.match(stdout, /✓/);
-  // Existing surface preserved.
-  assert.match(stdout, /one-shot run/);
-  assert.match(stdout, /Changed files: hello\.py/);
+  // Structured result sections.
+  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /iteration\(s\)/);
+  assert.match(stdout, /Provider/);
 });
 
 test('interactive: coordinator runs a task then returns to the prompt', async () => {
@@ -162,9 +169,10 @@ test('interactive: coordinator runs a task then returns to the prompt', async ()
   assert.equal(code, 0);
   assert.ok(existsSync(join(work, 'hello.py')), 'interactive task wrote the file');
   assert.match(stdout, /→ Editor/);
-  assert.match(stdout, /Changed files: hello\.py/);
+  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /Not a git repository/, '/status ran after the task');
-  const summaryIdx = stdout.indexOf('Changed files: hello.py');
+  const summaryIdx = stdout.indexOf('Files changed');
   const statusIdx = stdout.indexOf('Not a git repository');
   assert.ok(summaryIdx !== -1 && statusIdx > summaryIdx, 'task completed before /status');
   assert.match(stdout, /Goodbye/);

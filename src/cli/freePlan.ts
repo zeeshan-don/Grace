@@ -1,5 +1,5 @@
 /**
- * ZEESH FREE session display helpers (Milestone 13).
+ * GRACE FREE session display helpers (Milestone 13).
  *
  * Pure rendering only — every number comes from the backend's daily session
  * state (GET /api/usage / POST /api/provider response), so the CLI never

@@ -35,7 +35,7 @@ export interface Runtime {
 
 /** Shown when neither a local key nor a login session is available. */
 export const NO_PROVIDER_MESSAGE =
-  'No AI provider configured — add GROQ_API_KEY to .env or run "zeesh login" to use the ZEESH AI backend. Slash commands still work.';
+  'No AI provider configured — add GROQ_API_KEY to .env or run "grace login" to use the GRACE backend. Slash commands still work.';
 
 export type ProviderResolution =
   | { provider: AIProvider; error: null }
@@ -44,7 +44,7 @@ export type ProviderResolution =
 /**
  * Pick the AI provider for a run:
  *  1. a local GROQ_API_KEY wins (offline/self-hosted usage),
- *  2. otherwise a valid login session proxies model calls through the ZEESH AI
+ *  2. otherwise a valid login session proxies model calls through the GRACE
  *     backend (`POST /api/provider`) so production keys stay server-side.
  */
 export function resolveProvider(

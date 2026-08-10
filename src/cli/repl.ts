@@ -5,7 +5,6 @@ import { stdin as processStdin, stdout as processStdout, cwd } from 'node:proces
 import { ApiClient } from '../auth/client.ts';
 import { loadSession } from '../auth/session.ts';
 import { loadEnv } from '../config/config.ts';
-import { projectLabel } from '../project/detect.ts';
 import { RemoteProvider } from '../providers/remote.ts';
 import { createRuntime, type Runtime } from '../runtime.ts';
 import { shortPath } from '../util/text.ts';
@@ -15,19 +14,24 @@ import { c } from './colors.ts';
 import { cmdClear, cmdDiff, cmdHelp, cmdModel, cmdStatus, cmdUndo } from './commands.ts';
 import { bannerFreePlanLine } from './freePlan.ts';
 import { runTask } from './taskRunner.ts';
+import { promptBox } from './ui/box.ts';
+import { theme } from './ui/theme.ts';
+import { isVerbose, setVerbose, toggleVerbose } from './verbose.ts';
 
 export interface ReplOptions {
   yes?: boolean;
   model?: string;
+  verbose?: boolean;
 }
 
 /** Interactive prompt (TTY) — branded, clean. */
-const PROMPT = c.bold('zeesh') + c.cyan('› ');
+const PROMPT = c.bold('grace') + c.cyan('› ');
 const CONTINUATION_PROMPT = c.cyan('… ');
 
 export async function runRepl(opts: ReplOptions = {}): Promise<number> {
   const root = cwd();
   loadEnv(root);
+  if (opts.verbose) setVerbose(true);
   const isTty = Boolean(processStdin.isTTY && processStdout.isTTY);
   if (isTty) return runTty(root, opts);
   return runPiped(root, opts);
@@ -45,6 +49,7 @@ async function runTty(root: string, opts: ReplOptions): Promise<number> {
     ask: (cmd, reasons) => askPermission(rl, cmd, reasons),
   });
   await printBanner(runtime);
+  console.log(promptBox());
 
   // Ctrl+C at the prompt: close the interface → pending question rejects → exit cleanly.
   rl.on('SIGINT', () => {
@@ -52,7 +57,7 @@ async function runTty(root: string, opts: ReplOptions): Promise<number> {
   });
 
   const finish = () => rl.close();
-  await runLoop(runtime, nextTaskTty(rl), finish);
+  await runLoop(runtime, nextTaskTty(rl), finish, () => console.log(promptBox()));
   console.log(c.dim('Goodbye.'));
   return 0;
 }
@@ -141,6 +146,7 @@ async function runLoop(
   runtime: Runtime,
   nextTask: () => Promise<string | null>,
   finish: () => void,
+  afterTask?: () => void,
 ): Promise<void> {
   while (true) {
     const task = await nextTask();
@@ -171,11 +177,12 @@ async function runLoop(
     // A failing task must never kill the session — report the error and return
     // to the prompt so the user can try another task.
     try {
-      await runTask(runtime, trimmed, { awaitUsageReport: false });
+      await runTask(runtime, trimmed, { awaitUsageReport: false, verbose: isVerbose() });
     } catch (err) {
       console.log(c.red('Task failed unexpectedly: ' + ((err as Error).message ?? err)));
       console.log(c.dim('Returning to the prompt — try again or run /help.'));
     }
+    afterTask?.();
   }
 }
 
@@ -198,6 +205,9 @@ async function handleSlash(runtime: Runtime, cmd: string, arg: string): Promise<
       break;
     case '/undo':
       await cmdUndo(runtime);
+      break;
+    case '/verbose':
+      console.log(c.green(`Verbose mode: ${toggleVerbose() ? 'on' : 'off'}.`));
       break;
     case '/login':
       await cmdLogin(arg);
@@ -225,21 +235,30 @@ async function handleSlash(runtime: Runtime, cmd: string, arg: string): Promise<
 // ---------------------------------------------------------------------------
 
 async function printBanner(runtime: Runtime): Promise<void> {
-  const projectLabelText = `${projectLabel(runtime.project)} · ${shortPath(runtime.root, homedir())}`;
-  const providerStatus = runtime.provider
-    ? `${runtime.provider.label} · ${runtime.provider.getModel().id}`
-    : c.yellow('not configured — add GROQ_API_KEY to .env or run /login');
+  const th = theme();
   const session = loadSession();
+  const providerStatus = runtime.provider
+    ? runtime.provider.label
+    : c.yellow('not configured — add GROQ_API_KEY to .env or run /login');
+  const modelStatus = runtime.provider ? runtime.provider.getModel().id : th.dim('—');
   const sessionStatus = session
     ? c.green(`logged in as ${session.user.email} · ${session.apiUrl}`)
     : c.dim('not logged in — local-only mode (usage tracking off, optional)');
   const freePlan = await loadBannerFreePlan(runtime);
-  console.log(renderBanner({ project: projectLabelText, provider: providerStatus, session: sessionStatus, freePlan }));
+  console.log(
+    renderBanner({
+      directory: shortPath(runtime.root, homedir()),
+      provider: providerStatus,
+      model: modelStatus,
+      session: sessionStatus,
+      freePlan,
+    }),
+  );
   console.log('');
 }
 
 /**
- * ZEESH FREE banner row: fetch the server's daily session state once, briefly.
+ * GRACE FREE banner row: fetch the server's daily session state once, briefly.
  * Best-effort only — a slow/unreachable backend never delays or breaks the CLI.
  */
 async function loadBannerFreePlan(runtime: Runtime): Promise<string | undefined> {
@@ -264,7 +283,10 @@ async function askPermission(
   reasons: string[],
 ): Promise<boolean> {
   const answer = await rl.question(
-    `\n${c.red('The agent wants to run:')}\n\n  ${command}\n\n${c.yellow(`Flagged: ${reasons.join('; ')}`)}\n\nAllow? [y/N] `,
+    `\n${c.red('! The agent wants to run:')}` +
+    `\n\n  ${command}` +
+    `\n\n${c.yellow(`Flagged: ${reasons.join('; ')}`)}` +
+    `\n\nAllow? [y/N] `,
   );
   return /^y(es)?$/i.test(answer.trim());
 }

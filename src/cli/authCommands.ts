@@ -1,5 +1,5 @@
 /**
- * Auth CLI commands (Milestone 11): `zeesh login|register|logout|whoami`.
+ * Auth CLI commands (Milestone 11): `grace login|register|logout|whoami`.
  *
  * Login/register prompt for credentials (passwords are hidden), call the
  * backend, and persist the session token in ~/.zeesh/auth.json (0600).
@@ -13,11 +13,11 @@ import { clearSession, loadSession, saveSession, sessionExpired, type StoredSess
 import { c } from './colors.ts';
 import { promptHidden, promptText } from './input.ts';
 
-/** `zeesh login [email]` */
+/** `grace login [email]` */
 export async function cmdLogin(arg: string): Promise<number> {
   const existing = loadSession();
   const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
-  console.log(c.dim(`ZEESH AI backend: ${apiUrl}`));
+  console.log(c.dim(`GRACE backend: ${apiUrl}`));
 
   const email = (arg.trim() || (await promptText(c.bold('Email: ')))).trim();
   const password = await promptHidden(c.bold('Password: '));
@@ -33,7 +33,7 @@ export async function cmdLogin(arg: string): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      console.log(c.yellow('Invalid email or password. No account yet? Try "zeesh register".'));
+      console.log(c.yellow('Invalid email or password. No account yet? Try "grace register".'));
     } else if (err instanceof ApiError && err.status === 429) {
       console.log(c.yellow(`Too many login attempts — try again in ${err.retryAfterSeconds ?? 60}s.`));
     } else if (err instanceof ApiError && err.status === 403) {
@@ -45,11 +45,11 @@ export async function cmdLogin(arg: string): Promise<number> {
   }
 }
 
-/** `zeesh register [email]` — create an account (password ≥ 8 chars). */
+/** `grace register [email]` — create an account (password ≥ 8 chars). */
 export async function cmdRegister(arg: string): Promise<number> {
   const existing = loadSession();
   const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
-  console.log(c.dim(`ZEESH AI backend: ${apiUrl}`));
+  console.log(c.dim(`GRACE backend: ${apiUrl}`));
 
   const email = (arg.trim() || (await promptText(c.bold('Email: ')))).trim();
   const password = await promptHidden(c.bold('Password: '));
@@ -70,7 +70,7 @@ export async function cmdRegister(arg: string): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) {
-      console.log(c.yellow('An account with this email already exists. Try "zeesh login".'));
+      console.log(c.yellow('An account with this email already exists. Try "grace login".'));
     } else if (err instanceof ApiError && err.status === 429) {
       console.log(c.yellow(`Too many attempts — try again in ${err.retryAfterSeconds ?? 60}s.`));
     } else if (err instanceof ApiError && err.status === 403) {
@@ -82,7 +82,7 @@ export async function cmdRegister(arg: string): Promise<number> {
   }
 }
 
-/** `zeesh logout` */
+/** `grace logout` */
 export async function cmdLogout(): Promise<number> {
   const session = loadSession();
   if (!session) {
@@ -100,22 +100,22 @@ export async function cmdLogout(): Promise<number> {
   return 0;
 }
 
-/** `zeesh whoami` */
+/** `grace whoami` */
 export async function cmdWhoami(): Promise<number> {
   const session = loadSession();
   if (!session) {
-    console.log(c.dim('Not logged in. Run "zeesh login" to connect to the ZEESH AI backend.'));
+    console.log(c.dim('Not logged in. Run "grace login" to connect to the GRACE backend.'));
     return 1;
   }
 
-  console.log(c.bold('ZEESH AI session'));
+  console.log(c.bold('GRACE session'));
   console.log(`  Email:     ${session.user.email}`);
   console.log(`  User ID:   ${session.user.id}`);
   console.log(`  Backend:   ${session.apiUrl}`);
   console.log(`  Expires:   ${session.expiresAt ? new Date(session.expiresAt).toLocaleString() : '—'}`);
 
   if (sessionExpired(session)) {
-    console.log(c.yellow('  Status:    expired — run "zeesh login" again.'));
+    console.log(c.yellow('  Status:    expired — run "grace login" again.'));
     return 1;
   }
 
@@ -127,7 +127,7 @@ export async function cmdWhoami(): Promise<number> {
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       clearSession();
-      console.log(c.yellow('  Status:    invalid session — run "zeesh login" again.'));
+      console.log(c.yellow('  Status:    invalid session — run "grace login" again.'));
       return 1;
     }
     console.log(c.dim('  Status:    cannot reach backend (offline) — using cached session'));

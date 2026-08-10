@@ -1,5 +1,5 @@
 /**
- * Subagent coordinator types (ZEESH coordinator).
+ * Subagent coordinator types (GRACE coordinator).
  *
  * The coordinator decomposes a user task into a small plan of specialized
  * agents. Each agent gets narrow context, a restricted tool set and explicit

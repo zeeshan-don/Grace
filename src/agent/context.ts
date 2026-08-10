@@ -19,7 +19,7 @@ export function buildSystemPrompt(info: ProjectInfo): string {
   const projectBitsText = projectBits(info);
 
   return [
-    'You are ZEESH AI, a coding agent working in the user\'s repository.',
+    'You are GRACE, a coding agent working in the user\'s repository.',
     `Project: ${projectBitsText} · root ${info.root}`,
     '',
     'Workflow:',

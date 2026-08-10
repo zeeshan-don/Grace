@@ -1,5 +1,5 @@
 /**
- * ZEESH FREE daily session system (Milestone 13) tests.
+ * GRACE FREE daily session system (Milestone 13) tests.
  *
  * Covers the required scenarios:
  *   - first session (auto-started by the first inference request)
@@ -35,6 +35,7 @@ import { createMemoryDb, type MemFreeSession, type MemoryDb } from './helpers/me
 afterEach(() => {
   delete process.env.DATABASE_URL;
   delete process.env.GROQ_API_KEY;
+  delete process.env.NVIDIA_API_KEY;
   delete process.env.ZEESH_SESSIONS_PER_DAY;
   delete process.env.ZEESH_SESSION_DURATION_MINUTES;
   delete process.env.ZEESH_AUTH_RATE_LIMIT_MAX;

@@ -105,7 +105,7 @@ async function main(): Promise<void> {
     });
 
   try {
-    // 1. login (register → persist session exactly like `zeesh login` does)
+    // 1. login (register → persist session exactly like `grace login` does)
     const client = new ApiClient(apiUrl, 8000);
     const auth = await client.register('e2e@example.com', 'hunter2-strong', 'E2E Tester');
     saveSession(

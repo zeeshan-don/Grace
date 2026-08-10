@@ -2,7 +2,7 @@
  * Browser-use availability (subagent coordinator).
  *
  * The browser agent must not pull in a browser automation dependency blindly.
- * ZEESH ships without playwright/puppeteer (browsers are not needed for normal
+ * GRACE ships without playwright/puppeteer (browsers are not needed for normal
  * CLI tasks), so the abstraction below reports availability, and the
  * coordinator marks the agent "unavailable" with a clear reason instead of
  * silently running a broken agent. Browser support can be added later by

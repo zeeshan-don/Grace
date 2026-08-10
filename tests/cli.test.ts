@@ -35,19 +35,19 @@ function runCli(...args: string[]): Promise<{ code: number; stdout: string; stde
   });
 }
 
-test('zeesh --version prints the CLI name and version', async () => {
+test('grace --version prints the CLI name and version', async () => {
   const { code, stdout, stderr } = await runCli('--version');
   assert.equal(code, 0, stdout + stderr);
-  assert.match(stdout.trim(), /^zeesh v0\.1\.0$/);
+  assert.match(stdout.trim(), /^grace v0\.1\.0$/);
 });
 
-test('zeesh --help uses the zeesh command name and ZEESH_* env vars', async () => {
+test('grace --help uses the grace command name and ZEESH_* env vars', async () => {
   const { code, stdout } = await runCli('--help');
   assert.equal(code, 0);
-  assert.match(stdout, /zeesh login \[email\]/);
-  assert.match(stdout, /zeesh register \[email\]/);
-  assert.match(stdout, /zeesh logout/);
-  assert.match(stdout, /zeesh whoami/);
+  assert.match(stdout, /grace login \[email\]/);
+  assert.match(stdout, /grace register \[email\]/);
+  assert.match(stdout, /grace logout/);
+  assert.match(stdout, /grace whoami/);
   assert.match(stdout, /ZEESH_SHELL/);
   assert.ok(!stdout.includes('MYAGENT_SHELL'), 'no legacy MYAGENT_SHELL in help');
   assert.ok(!stdout.includes('myagent'), 'no legacy myagent branding in help');

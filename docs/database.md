@@ -4,14 +4,15 @@ The cloud backend records accounts, sessions, usage and economics in **Neon
 PostgreSQL**. The schema lives in [`db/migrations/`](../db/migrations/) and is
 wired into the API via the `DATABASE_URL` environment variable
 (`src/api/db.ts`). The CLI stays fully local and offline-capable; once the user
-logs in (`zeesh login`) it reports usage through the API.
+logs in (`grace login`) it reports usage through the API.
 
 ## Design goals
 
 - **Prove economics**: compute AI cost per user, infra cost per user, ad
   revenue per user, and profit/loss per user.
-- **Never expose provider keys to clients**: the backend owns `GROQ_API_KEY`
-  (or equivalent) and proxies model calls (`src/api/providers.ts`).
+- **Never expose provider keys to clients**: the backend owns
+  `NVIDIA_API_KEY` (primary) and `GROQ_API_KEY` (fallback) and proxies model
+  calls through the Model Router (`src/api/providers.ts`).
 - **Track every agent turn** so per-user cost is auditable.
 - **Never store plaintext credentials**: passwords are scrypt-hashed
   (`users.password_hash`), session tokens are stored as SHA-256 only
@@ -46,7 +47,7 @@ Get a database:
 | `001_init.sql` | 10 | `users`, `sessions`, `agent_runs`, `usage`, `models`, `user_economics` view |
 | `002_auth.sql` | 11 | `users.password_hash`, indexes on `sessions.token_hash` and `(user_id, expires_at)` |
 | `003_closed_beta.sql` | 12 | `users.is_beta`, timestamp indexes (`agent_runs/usage/users.created_at`, `sessions.expires_at`) |
-| `004_free_sessions.sql` | 13 | `free_sessions` (ZEESH FREE daily session quota: 6 sessions/day × 60 min, unique per user/day/number) |
+| `004_free_sessions.sql` | 13 | `free_sessions` (GRACE FREE daily session quota: 6 sessions/day × 60 min, unique per user/day/number) |
 
 ## Schema
 
@@ -58,7 +59,7 @@ Get a database:
 | `usage` | Per-run token usage rows, the source for cost calculation |
 | `models` | Model catalog with placeholder pricing per 1M tokens |
 | `user_economics` | View: runs, total tokens and estimated AI cost per user |
-| `free_sessions` | ZEESH FREE quota rows — one per daily session (`day` = UTC date, `session_number` 1..N, `started_at`, `expires_at`, `ended_at`) |
+| `free_sessions` | GRACE FREE quota rows — one per daily session (`day` = UTC date, `session_number` 1..N, `started_at`, `expires_at`, `ended_at`) |
 
 `agent_runs` + `usage` together track everything the milestones require:
 
@@ -92,12 +93,12 @@ CLI ──POST /api/usage (Bearer token)──► Backend ──► Neon: agent_
 
 ```
 CLI ──POST /api/usage──► Backend ──► Neon: agent_runs + usage rows
-CLI ──POST /api/provider──► Backend ──► Model router ──► AI provider (key stays server-side)
+CLI ──POST /api/provider──► Backend ──► Model router (NVIDIA NIM → Groq fallback) ──► AI provider (key stays server-side)
 ```
 
 The CLI keeps working offline (local key) while the backend path adds accounts,
 rate limiting, central usage tracking and ad slots. The CLI now reports usage
-to the backend whenever a valid session exists (`zeesh login`); reporting is
+to the backend whenever a valid session exists (`grace login`); reporting is
 non-fatal — a backend outage never breaks the local agent.
 
 ## Closed beta (Milestone 12)
@@ -114,7 +115,7 @@ non-fatal — a backend outage never breaks the local agent.
 
 ## Free plan sessions (Milestone 13)
 
-The free tier (`ZEESH FREE`) is enforced by the backend via the
+The free tier (`GRACE FREE`) is enforced by the backend via the
 `free_sessions` table, written only by `src/api/freeSessions.ts`:
 
 - One row per session: `user_id`, the UTC `day` the session started in,

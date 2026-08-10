@@ -1,15 +1,19 @@
 # Deployment (Milestone 12 — closed beta)
 
-This document explains how to deploy the ZEESH AI backend to **Vercel** with a
+This document explains how to deploy the GRACE backend to **Vercel** with a
 **Neon PostgreSQL** database. It contains **no real secrets** — only
 placeholders and instructions.
 
 ```
-LOCAL CLI  →  ZEESH AI API (Vercel)  →  Neon PostgreSQL  →  AI providers (server-side key)
+LOCAL CLI  →  GRACE API (Vercel)  →  Neon PostgreSQL  →  Model Router → NVIDIA NIM (primary) → Groq (fallback)
 ```
 
+*Without `NVIDIA_API_KEY`, `/api/provider` works exactly as before using only
+`GROQ_API_KEY` (required). With both set, NVIDIA NIM is tried first and Groq
+is the automatic fallback for the same request.
+
 The local CLI itself is not deployed: it runs on the developer's machine and
-talks to this backend only for accounts + usage reporting (`zeesh login`).
+talks to this backend only for accounts + usage reporting (`grace login`).
 
 ---
 
@@ -24,7 +28,7 @@ talks to this backend only for accounts + usage reporting (`zeesh login`).
 The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
 `src/` with esbuild, so the built `dist/` is **not** part of the deployment.
 
-> **ZEESH AI is not a static site.** `vercel.json` declares the `api/**/*.ts`
+> **GRACE is not a static site.** `vercel.json` declares the `api/**/*.ts`
 > serverless functions, contains **no** `framework` preset (Vercel auto-detects
 > "Other"), and **omits `outputDirectory` entirely** — this is the correct,
 > current config format (the legacy `builds` array in `vercel.json` is
@@ -70,7 +74,8 @@ Variables) for the `production` (and `preview`) environments:
 | Variable | Required | Purpose |
 | -------- | -------- | ------- |
 | `DATABASE_URL` | yes | Neon pooled connection string (`postgresql://…`) |
-| `GROQ_API_KEY` | yes | Server-side AI key for `/api/provider` — never exposed to clients |
+| `GROQ_API_KEY` | yes | Server-side AI key for `/api/provider` (fallback provider) — never exposed to clients |
+| `NVIDIA_API_KEY` | no* | Server-side primary provider (NVIDIA NIM) for `/api/provider` — never exposed to clients. Set it to route NVIDIA first with Groq as fallback; without it the router is Groq-only |
 | `ZEESH_BETA_MODE` | no | `closed` to gate registration behind an allowlist (default `open`) |
 | `ZEESH_BETA_ALLOWLIST` | no | Comma-separated emails allowed to register when closed |
 | `ZEESH_CORS_ORIGIN` | no | Browser origin allowed to call the API (default `*`) |
@@ -143,9 +148,9 @@ curl -H "Authorization: Bearer <token>" https://<your-project>.vercel.app/api/au
 
 # 5. CLI against production
 export ZEESH_API_URL=https://<your-project>.vercel.app
-zeesh login
-zeesh whoami
-zeesh logout
+grace login
+grace whoami
+grace logout
 ```
 
 ## 7. Rollback considerations

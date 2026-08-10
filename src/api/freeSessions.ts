@@ -1,5 +1,5 @@
 /**
- * ZEESH FREE daily session service (Milestone 13).
+ * GRACE FREE daily session service (Milestone 13).
  *
  * Enforces the free plan on the server — the CLI never stores or trusts any
  * session state, so restarting it or deleting local files can never reset the
@@ -154,7 +154,7 @@ export class FreeSessionService {
           code: 'daily_limit_exhausted',
           error:
             `You have used all ${limit} free sessions for today (${Math.round((limit * this.sessionDurationMs) / 3_600_000)}h max). ` +
-            'New sessions unlock at 00:00 UTC. Thanks for using ZEESH FREE.',
+            'New sessions unlock at 00:00 UTC. Thanks for using GRACE FREE.',
           // The state rides along so the rejection is self-describing (the
           // CLI can render "Session 6/6" from the 429 itself).
           state: this.computeState(rows, now),

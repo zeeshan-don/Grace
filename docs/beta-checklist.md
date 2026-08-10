@@ -19,10 +19,10 @@ are done.
       starts session 1 (`currentSession: 1`); after the 6th session the 7th
       returns `429` with `code: "daily_limit_exhausted"`
       (unit-tested in `tests/freeSessions.test.ts`)
-- [ ] **Registration** — `zeesh register` → "Account created — logged in as …"
-- [ ] **Login** — `zeesh login` → "Logged in as …"
-- [ ] **Logout** — `zeesh logout` → "Logged out — local session removed."
-- [ ] **Authenticated API** — `zeesh whoami` → "Status: valid"
+- [ ] **Registration** — `grace register` → "Account created — logged in as …"
+- [ ] **Login** — `grace login` → "Logged in as …"
+- [ ] **Logout** — `grace logout` → "Logged out — local session removed."
+- [ ] **Authenticated API** — `grace whoami` → "Status: valid"
 - [ ] **Usage reporting** — run one agent task while logged in, then
       `SELECT COUNT(*) FROM usage;` on Neon (row appears; user_id matches)
 - [ ] **Rate limiting** — `ZEESH_AUTH_RATE_LIMIT_MAX=3` + 5 failed logins →
@@ -31,7 +31,7 @@ are done.
       hashed session tokens, cross-user access prevention, no stack traces in
       API errors, secret-safe logging
 - [ ] **CLI installation** — fresh machine: `npm install` → `npm run build` →
-      `npm link` → `zeesh --version` prints the version
+      `npm link` → `grace --version` prints the version
 - [ ] **Real project test** — ask the agent to create → modify → break → fix →
       verify a small app in a throwaway project (see
       `docs/validation-milestone-01.md` for the format)
@@ -45,7 +45,8 @@ are done.
 ## Production (before inviting testers)
 
 - [ ] Vercel project created and linked (`vercel link`)
-- [ ] `DATABASE_URL` + `GROQ_API_KEY` set in Vercel env (production)
+- [ ] `DATABASE_URL` + `GROQ_API_KEY` set in Vercel env (production);
+      `NVIDIA_API_KEY` set too when NVIDIA NIM should be the primary provider
 - [ ] Closed beta env set: `ZEESH_BETA_MODE=closed` + `ZEESH_BETA_ALLOWLIST`
 - [ ] `vercel --prod` deployed
 - [ ] `curl <prod>/api/health` → `database:"connected"`

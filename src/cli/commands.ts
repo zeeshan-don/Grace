@@ -4,11 +4,15 @@ import { loadSession } from '../auth/session.ts';
 import { loadAppConfig, saveAppConfig, DEFAULT_MODELS } from '../config/config.ts';
 import { diffStat, diffUnified, gitSummary, statusShort } from '../git/git.ts';
 import { projectLabel } from '../project/detect.ts';
+import { RemoteProvider } from '../providers/remote.ts';
 import type { Runtime } from '../runtime.ts';
 import { shortPath } from '../util/text.ts';
-import { c } from './colors.ts';
 import { renderHelp } from './banner.ts';
+import { c } from './colors.ts';
 import { formatCountdown, formatDailyUsage, sessionSecondsLeft } from './freePlan.ts';
+import { collapseLines, outputCountLine, renderModelPanel, renderStatusPanel, type StatusPanelInfo } from './ui/results.ts';
+import { symbols, theme } from './ui/theme.ts';
+import { isVerbose } from './verbose.ts';
 
 export async function cmdHelp(): Promise<void> {
   console.log(renderHelp());
@@ -17,15 +21,28 @@ export async function cmdHelp(): Promise<void> {
 export async function cmdModel(runtime: Runtime, arg: string): Promise<void> {
   const provider = runtime.provider;
   if (!provider) {
-    console.log(c.red(runtime.providerError ?? 'No provider configured.'));
+    console.log(renderModelPanel({
+      providerAvailable: false,
+      providerLabel: '',
+      model: '',
+      contextWindow: 0,
+      providerError: runtime.providerError ?? 'No provider configured.',
+    }));
     return;
   }
   const argTrim = arg.trim();
 
-  if (argTrim === '' ) {
-    console.log(`Provider: ${provider.label} (${provider.id})`);
-    console.log(`Model:    ${provider.getModel().id}`);
-    console.log(`Context:  ~${Math.round(provider.getModel().contextWindow / 1000)}k tokens`);
+  if (argTrim === '') {
+    // When logged in, the backend reports which provider actually served the
+    // last request (e.g. NVIDIA NIM after router fallback) — never a key.
+    const served = provider instanceof RemoteProvider ? provider.serverProvider : null;
+    console.log(renderModelPanel({
+      providerAvailable: true,
+      providerLabel: served?.label ?? provider.label,
+      servedVia: served ? provider.label : undefined,
+      model: provider.getModel().id,
+      contextWindow: provider.getModel().contextWindow,
+    }));
     console.log(c.dim('Switch with /model <id>. See available ids with /model list.'));
     return;
   }
@@ -37,7 +54,7 @@ export async function cmdModel(runtime: Runtime, arg: string): Promise<void> {
       console.log(c.yellow('Could not list models for this provider — set one directly with /model <id>.'));
       return;
     }
-    console.log(models.map((m) => '  ' + m).join('\n'));
+    console.log(models.map((m) => '  ' + theme().model(m)).join('\n'));
     console.log(c.dim(`\nDefault candidates: ${DEFAULT_MODELS.join(', ')}`));
     return;
   }
@@ -57,74 +74,90 @@ export async function cmdStatus(runtime: Runtime): Promise<void> {
   const p = runtime.project;
   const git = gitSummary(runtime.root);
   const provider = runtime.provider;
+  const session = runtime.session;
 
-  console.log(c.bold('Project'));
-  console.log(`  Root:         ${shortPath(runtime.root, homedir())}`);
-  console.log(`  Type:         ${projectLabel(p)}`);
-  console.log(`  Package mgr:  ${p.packageManager}`);
-  console.log(`  Languages:    ${p.languages.join(', ') || '—'}`);
-  if (p.configFiles.length) console.log(`  Config:       ${p.configFiles.slice(0, 10).join(', ')}`);
-  if (p.testCommand || p.buildCommand) {
-    console.log(`  Test/build:   ${[p.testCommand, p.buildCommand].filter(Boolean).join(' · ')}`);
-  }
+  const served = provider instanceof RemoteProvider ? provider.serverProvider : null;
+  const info: StatusPanelInfo = {
+    project: {
+      directory: shortPath(runtime.root, homedir()),
+      type: projectLabel(p),
+      packageManager: p.packageManager,
+      languages: p.languages,
+      configFiles: p.configFiles,
+      testCommand: p.testCommand ?? undefined,
+      buildCommand: p.buildCommand ?? undefined,
+    },
+    git: {
+      isRepo: git.isRepo,
+      branch: git.branch,
+      hasChanges: git.hasChanges,
+      statusLines: git.statusLines,
+    },
+    provider: provider
+      ? {
+          available: true,
+          error: null,
+          label: served?.label ?? provider.label,
+          servedVia: served ? provider.label : null,
+          model: provider.getModel().id,
+          contextWindow: provider.getModel().contextWindow,
+        }
+      : {
+          available: false,
+          error: runtime.providerError ?? 'not configured',
+          label: '',
+          servedVia: null,
+          model: '',
+          contextWindow: 0,
+        },
+    session: {
+      messages: session.messageCount,
+      toolCalls: session.stats.toolCalls,
+      runs: session.stats.runs,
+      inputTokens: session.stats.inputTokens,
+      outputTokens: session.stats.outputTokens,
+      undoSnapshots: runtime.undo.count,
+    },
+    freePlan: await freePlanStatusLines(),
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      stateDir: shortPath(runtime.root + '/.zeesh', homedir()),
+    },
+  };
 
-  console.log(c.bold('Git'));
-  if (!git.isRepo) {
-    console.log('  Not a git repository');
-  } else {
-    console.log(`  Branch:       ${git.branch ?? '(detached)'}`);
-    console.log(`  Working tree: ${git.hasChanges ? c.yellow(`${git.statusLines} change(s)`) : c.green('clean')}`);
-  }
-
-  console.log(c.bold('Model'));
-  if (provider) {
-    console.log(`  Provider:     ${provider.label}`);
-    console.log(`  Model:        ${provider.getModel().id}`);
-  } else {
-    console.log(`  ${c.red(runtime.providerError ?? 'not configured')}`);
-  }
-
-  console.log(c.bold('Session'));
-  console.log(`  Messages:     ${runtime.session.messageCount}`);
-  console.log(`  Tool calls:   ${runtime.session.stats.toolCalls}`);
-  console.log(`  Runs:         ${runtime.session.stats.runs}`);
-  console.log(`  Tokens (in/out): ${runtime.session.stats.inputTokens} / ${runtime.session.stats.outputTokens}`);
-  console.log(`  Undo stack:   ${runtime.undo.count} snapshot(s)`);
-
-  await printFreePlanStatus();
-
-  console.log(c.bold('Runtime'));
-  console.log(`  node ${process.version} · ${process.platform}`);
-  console.log(`  State dir:    ${shortPath(runtime.root + '/.zeesh', homedir())}`);
+  console.log(renderStatusPanel(info));
 }
 
 /**
- * ZEESH FREE daily session section of /status. Server-authoritative and
+ * GRACE FREE daily session section of /status. Server-authoritative and
  * best-effort: offline / pre-session backends just print a dim note.
  */
-async function printFreePlanStatus(): Promise<void> {
-  console.log(c.bold('Free plan'));
+async function freePlanStatusLines(): Promise<string[]> {
+  const sym = symbols();
   const session = loadSession();
   if (!session) {
-    console.log('  Not logged in — local/offline mode (no session limits).');
-    return;
+    return ['  Not logged in — local/offline mode (no session limits).'];
   }
   try {
     const state = await new ApiClient(session.apiUrl, 3000).getUsage(session.token);
     const total = state.sessionsUsed + state.sessionsRemaining;
-    console.log(`  Sessions:     ${state.sessionsUsed} / ${total} used today`);
-    console.log(`  Daily usage:  ${formatDailyUsage(state.dailyUsedSeconds)} / ${formatDailyUsage(state.dailyLimitSeconds)}`);
+    const lines = [
+      `  Sessions:     ${state.sessionsUsed} / ${total} used today`,
+      `  Daily usage:  ${formatDailyUsage(state.dailyUsedSeconds)} / ${formatDailyUsage(state.dailyLimitSeconds)}`,
+    ];
     const left = sessionSecondsLeft(state.sessionExpiresAt);
-    console.log(
+    lines.push(
       left !== null
         ? `  Time left:    ${formatCountdown(left)} (session ${state.currentSession ?? '—'})`
         : `  Time left:    no active session (${state.sessionsRemaining} remaining)`,
     );
     if (state.sessionsRemaining === 0 && left === null) {
-      console.log(c.yellow('  Daily quota reached — new sessions unlock at 00:00 UTC.'));
+      lines.push(`  ${c.yellow(`Daily quota reached — new sessions unlock at 00:00 UTC.`)}`);
     }
+    return lines;
   } catch {
-    console.log(c.dim('  Could not reach the backend (offline) — server enforces limits.'));
+    return [`  ${c.dim(`Could not reach the backend (offline) — server enforces limits.`)}`];
   }
 }
 
@@ -146,8 +179,11 @@ export async function cmdDiff(runtime: Runtime): Promise<void> {
     console.log(c.green('Working tree clean — no changes to show.'));
     return;
   }
+
+  const statusLines = status.split('\n');
   console.log(c.bold('git status --short'));
-  console.log(status.split('\n').slice(0, 60).map((l) => '  ' + l).join('\n'));
+  if (statusLines.length > 40 && !isVerbose()) console.log(outputCountLine('Command output', statusLines.length));
+  console.log(collapseLines(status, { max: 40, verbose: isVerbose() }));
 
   const stat = diffStat(runtime.root);
   if (stat.trim()) {
@@ -155,10 +191,12 @@ export async function cmdDiff(runtime: Runtime): Promise<void> {
     console.log('  ' + stat.split('\n').join('\n  '));
   }
 
-  const diff = diffUnified(runtime.root, 200);
+  const diff = diffUnified(runtime.root, 500);
   if (diff.trim()) {
+    const diffLines = diff.split('\n');
     console.log(c.bold('\ngit diff'));
-    console.log(diff);
+    if (diffLines.length > 120 && !isVerbose()) console.log(outputCountLine('Command output', diffLines.length));
+    console.log(collapseLines(diff, { max: 120, verbose: isVerbose() }));
   }
 }
 
@@ -180,5 +218,3 @@ export async function cmdUndo(runtime: Runtime): Promise<void> {
   );
   console.log(c.dim('Use /diff to review the working tree.'));
 }
-
-

@@ -4,7 +4,7 @@ import { extractLastJsonObject } from './structured.ts';
 import type { AgentPlan, AgentRole, Planner, PlannerInput, PlanStep } from './types.ts';
 
 /**
- * Task planning (ZEESH coordinator).
+ * Task planning (GRACE coordinator).
  *
  * The planner decides WHICH agents run, in WHAT order, and WHAT can run in
  * parallel. The LLM planner is used when a provider is available; the
@@ -112,7 +112,7 @@ export function ruleBasedPlanner(input: PlannerInput): AgentPlan {
 // ---------------------------------------------------------------------------
 
 const PLANNER_SYSTEM = [
-  'You are the ZEESH coordinator planner. Decide which specialized agents should work on the task and in what order.',
+  'You are the GRACE coordinator planner. Decide which specialized agents should work on the task and in what order.',
   'Rules:',
   '- Use as few agents as possible; simple tasks get one agent.',
   '- Order is sequential: exploration (project-scout, file-picker, thinker, researcher) before the editor, editor before verification.',

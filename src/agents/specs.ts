@@ -1,7 +1,7 @@
 import type { AgentRole, AgentSpec, Capability, ModelTier } from './types.ts';
 
 /**
- * Subagent role specifications (ZEESH coordinator).
+ * Subagent role specifications (GRACE coordinator).
  *
  * Every spec is narrow on purpose: one job, a tight tool grant, a strict
  * permission boundary and a bounded iteration/context budget. The coordinator

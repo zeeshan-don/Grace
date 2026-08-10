@@ -77,10 +77,10 @@ export function groqApiKey(): string | undefined {
   return key ? key : undefined;
 }
 
-/** Default ZEESH AI backend URL used by login/usage-reporting when unset. */
+/** Default GRACE backend URL used by login/usage-reporting when unset. */
 export const DEFAULT_API_URL = 'http://localhost:8787';
 
-/** The ZEESH AI backend the CLI authenticates against (env override). */
+/** The GRACE backend the CLI authenticates against (env override). */
 export function zeeshApiUrl(): string {
   return process.env.ZEESH_API_URL?.trim() || DEFAULT_API_URL;
 }
