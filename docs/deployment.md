@@ -24,10 +24,11 @@ talks to this backend only for accounts + usage reporting (`zeesh login`).
 The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
 `src/` with esbuild, so the built `dist/` is **not** part of the deployment.
 
-> **ZEESH AI is not a static site.** `vercel.json` pins `"framework": null`,
-> **omits `outputDirectory` entirely** and declares the `api/**/*.ts`
-> serverless functions — this is the correct, current config format (the
-> legacy `builds` array in `vercel.json` is deprecated).
+> **ZEESH AI is not a static site.** `vercel.json` declares the `api/**/*.ts`
+> serverless functions, contains **no** `framework` preset (Vercel auto-detects
+> "Other"), and **omits `outputDirectory` entirely** — this is the correct,
+> current config format (the legacy `builds` array in `vercel.json` is
+> deprecated).
 >
 > **Never set an `outputDirectory` for an API-only project** — and in
 > particular never set it to `""` (empty string). `"outputDirectory": ""`
