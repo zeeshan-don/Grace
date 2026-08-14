@@ -1,3 +1,4 @@
+import { DeepSeekProvider } from './deepseek.ts';
 import { GroqProvider } from './groq.ts';
 import { NvidiaProvider } from './nvidia.ts';
 import type { AIProvider } from './types.ts';
@@ -19,11 +20,13 @@ export function createProvider(id: string, opts: ProviderFactoryOptions): AIProv
       return new GroqProvider({ apiKey: opts.apiKey, model: opts.model });
     case 'nvidia':
       return new NvidiaProvider({ apiKey: opts.apiKey, model: opts.model });
+    case 'deepseek':
+      return new DeepSeekProvider({ apiKey: opts.apiKey, model: opts.model });
     default:
       throw new Error(
-        `Unknown provider "${id}". Implemented: groq, nvidia. (Extension points exist for gemini, anthropic, openai, ollama — not yet wired.)`,
+        `Unknown provider "${id}". Implemented: groq, nvidia, deepseek. (Extension points exist for gemini, anthropic, openai, ollama — not yet wired.)`,
       );
   }
 }
 
-export const SUPPORTED_PROVIDERS = ['groq', 'nvidia'] as const;
+export const SUPPORTED_PROVIDERS = ['groq', 'nvidia', 'deepseek'] as const;

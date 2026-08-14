@@ -284,16 +284,34 @@ async function loadBannerFreePlan(runtime: Runtime): Promise<DailySessionState |
 // Agent execution
 // ---------------------------------------------------------------------------
 
+/** Command prefixes the user approved once with "always allow similar". */
+const approvedPrefixes = new Set<string>();
+
+/** First word of a command, e.g. "npm" from "npm install jsonwebtoken". */
+function commandPrefix(command: string): string {
+  const first = command.trim().split(/\s+/)[0] ?? '';
+  return first.replace(/[^a-zA-Z0-9._-]/g, '');
+}
+
 async function askPermission(
   rl: ReturnType<typeof createInterfacePromises>,
   command: string,
   reasons: string[],
 ): Promise<boolean> {
+  const prefix = commandPrefix(command);
+  if (prefix && approvedPrefixes.has(prefix)) return true;
+
   const answer = await rl.question(
-    `\n${c.red('! The agent wants to run:')}` +
+    `\n${c.red('! Grace wants to run:')}` +
     `\n\n  ${command}` +
     `\n\n${c.yellow(`Flagged: ${reasons.join('; ')}`)}` +
-    `\n\nAllow? [y/N] `,
+    `\n\n${c.dim('[y] Yes   [n] No   [a] Always allow similar')}` +
+    `\n> `,
   );
-  return /^y(es)?$/i.test(answer.trim());
+  const a = answer.trim().toLowerCase();
+  if (a.startsWith('a')) {
+    if (prefix) approvedPrefixes.add(prefix);
+    return true;
+  }
+  return a.startsWith('y');
 }

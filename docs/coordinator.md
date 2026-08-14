@@ -1,41 +1,55 @@
-# Subagent coordinator architecture (Milestone 14)
+# Grace coordinator architecture (primary-agent redesign)
 
-The GRACE coordinator decomposes every user task into a small plan of
-**specialized agents**, runs them with narrow context and narrow permissions,
-parallelizes independent work, and composes a concise final answer. This is an
-original implementation inspired by the Freebuff subagent model — it copies no
-source code, prompts, branding or proprietary implementation.
+GRACE is built around **one primary agent** that handles the task end to end —
+it understands the request, searches the repository, reads files, edits code,
+runs commands, fixes errors and iterates until the task is done. Planning and
+specialized subagents are **optional**: they are only engaged for complex tasks
+or when the user explicitly asks.
 
-Goals:
+```
+User request
+   │
+   ▼
+Fast local router (deterministic — NO model call)
+   │
+   ├── conversation → local reply (0 LLM calls, 0 tools)
+   ├── tests        → deterministic test runner (0 LLM calls)
+   │
+   └── coding / inspect / complex
+         │
+         ▼
+   ┌─────────────────────────────┐
+   │  Primary Agent (default)    │  one agent loop
+   │  search → read → edit/write │  full read/write/execute toolset
+   │  run commands → fix → re-run│
+   └─────────────────────────────┘
+         │
+         ▼
+   complex tasks only: optional planning phase
+   (thinker strategy specialist may run first)
+   │
+   ▼
+   composed final answer · changed files · validation · stats
+```
 
-- **Specialized agents** — one job per agent, tight system prompt.
-- **Narrow context** — no agent ever receives the whole repository or
-  conversation; only compacted, structured summaries of prior results.
-- **Narrow permissions** — each agent physically can only call the tools its
-  capability grant allows.
-- **Coordinator-driven delegation** — the coordinator (with a small planner
-  model call) decides which agents, in which order, and which run in parallel.
-- **Verification after changes** — the Test Runner and Code Reviewer run after
-  the Editor by default.
-- **Provider/model abstraction** — agents know only `AIProvider` and a model
-  tier hint; routing is pluggable.
+The philosophy: *Grace should feel like one intelligent, fast coding agent
+with powerful tools — not a slow committee meeting of six AI agents.*
 
-## Roles
+## Fast local router
 
-All role specs live in `src/agents/specs.ts`.
+`src/agents/fastRouter.ts` classifies every input with deterministic regex
+logic before any model call — no LLM is spent deciding which LLM should run.
 
-| Role | Capabilities | read-only | Model tier | Purpose |
-| ---- | ------------ | :-------: | :--------: | ------- |
-| project-scout | read | ✅ | fast | structural map of the repo (uses the maintained index) |
-| file-picker | read | ✅ | fast | find + rank relevant files |
-| thinker | read | ✅ | strong | deep reasoning → concise strategy |
-| researcher | read, web | ✅ | default | external docs/research with URLs (`web_fetch`) |
-| code-reviewer | read, diff | ✅ | strong | review changes for bugs/regressions/security/missing tests |
-| test-runner | read, execute | – | default | detect framework, run only relevant tests |
-| shell-runner | read, execute | – | default | run commands under the permission policy |
-| git-curator | read, diff, execute | – | default | inspect/stage/commit — never pushes without authorization |
-| browser-use | browser | ✅ | default | browser verification (unavailable without a backend) |
-| editor | read, write, execute | – | default | the primary coding agent (the original AgentLoop) |
+| Input | Route | Behavior |
+| ----- | ----- | -------- |
+| `hi`, `thanks`, `what can you do?` | conversation | local reply, instant, no provider needed |
+| `run the tests` | tests | deterministic test runner, no LLM |
+| `build authentication`, `refactor the architecture` | complex | optional planning + primary agent |
+| `explain package.json`, `what does this file do?` | inspect | primary agent (reads, doesn't edit) |
+| everything else | coding | primary agent immediately |
+
+Browser-verification requests ("why does this website look broken") route to
+`complex` so the optional browser specialist can report availability.
 
 ## Coordinator flow
 
@@ -43,85 +57,101 @@ All role specs live in `src/agents/specs.ts`.
 
 ```
 run(task)
-  1. planning event (CLI shows "· Planning…")
-  2. project index get()          — structural summary, fingerprint-cached
-  3. availability check           — browser-use reported unavailable
-  4. planner(plan)                — LLM planner → rule-based fallback
-     normalizePlan()              — cap steps, drop unknown roles,
-                                    enforce editor-alone steps
-  5. for each step (sequential):
-       compactResults(results)    — ≤ token budget
-       run agents in parallel     — bounded concurrency (default 2)
-  6. bounded review→fix loop     — if the reviewer found actionable issues,
-                                    the editor gets one more pass, then the
-                                    test runner re-verifies (default 1 round)
-  7. composeFinalAnswer()         — last editor summary first, then
-                                    review + test notes, then errors
+  1. route = classifyTask(task)         — fast local router, no model call
+  2. conversation  → local reply        — 0 LLM calls, 0 tools, 0 repo scan
+     tests         → deterministic runner — 0 LLM calls
+  3. complex tasks only:
+       planning event (CLI shows "· Planning…")
+       planner      — LLM planner (reasoning tier) → rule-based fallback,
+                      or an injected plan (tests)
+       normalizePlan — cap steps, drop unknown roles, editor runs alone
+  4. execute plan:
+       coding/inspect → DEFAULT_PRIMARY_PLAN = one step: [editor]
+       complex        → optional specialist steps (e.g. thinker) then editor
+       each step: compactResults(results) → run agents (bounded concurrency)
+  5. bounded review→fix loop — dormant by default (only when a reviewer ran
+      with actionable findings)
+  6. composeFinalAnswer() — the primary agent's summary, plus review/test
+      notes when present
 ```
 
-- Steps are **strictly ordered** (exploration → editor → verification).
-- Agents **within a step run concurrently** when independent
-  (e.g. test-runner + code-reviewer).
-- A failed agent is recorded and **never aborts the run** — later steps still
-  execute; the composed answer surfaces the failures. Even an *unexpected
-  crash* (a thrown exception, not just a provider error) is caught per agent
-  and marked `failed`.
-- **Review → fix loop** — when the Code Reviewer returns recommendations, the
-  Editor runs once more with those findings and the Test Runner re-verifies.
-  Bounded to one round (`fixRounds`) so it can never loop forever.
-- **Permission prompts are serialized** — parallel agents can never interleave
-  two `Allow? [y/N]` prompts on the same terminal.
+- The **primary agent is the default execution path** — simple and medium
+  tasks run exactly one agent loop.
+- Specialist subagents **only run when a complex plan includes them**
+  (e.g. `thinker` for architecture strategy, `researcher` for web research,
+  `browser-use` for browser verification).
+- A failed agent is recorded and **never aborts the run**; even an unexpected
+  crash is caught per agent and marked `failed`.
+- **Permission prompts are serialized** so parallel specialists can never
+  interleave two prompts on the same terminal.
 
-## Planner
+## Roles
+
+All role specs live in `src/agents/specs.ts`. The **editor is Grace — the
+primary agent** with the full read/write/execute toolset. The others are
+**optional specialists** that only appear when a complex plan includes them:
+
+| Role | Capabilities | read-only | Purpose |
+| ---- | ------------ | :-------: | ------- |
+| **editor (Grace)** | read, write, execute | – | the primary agent — handles the task end to end |
+| project-scout | read | ✅ | structural map of the repo (uses the maintained index) |
+| file-picker | read | ✅ | find + rank relevant files |
+| thinker | read | ✅ | deep reasoning → concise strategy (complex plans) |
+| researcher | read, web | ✅ | external docs/research with URLs (`web_fetch`) |
+| code-reviewer | read, diff | ✅ | review changes (only when explicitly planned/requested) |
+| test-runner | read, execute | – | deterministic — runs tests with no LLM |
+| shell-runner | read, execute | – | run commands under the permission policy |
+| git-curator | read, diff, execute | – | inspect/stage/commit — never pushes without authorization |
+| browser-use | browser | ✅ | browser verification (unavailable without a backend) |
+
+## Planner (optional, complex tasks only)
 
 `src/agents/planner.ts`:
 
 - `llmPlanner(provider)` — one small non-streaming chat call asking for a JSON
-  plan `{"steps":[{"agents":[...],"reason":"..."}]}`. Parsed defensively
-  (`parsePlan`) and validated by `normalizePlan`.
-- `ruleBasedPlanner(input)` — deterministic classification used when the model
-  is unavailable/unparseable: test/git/research/informational/browser keyword
-  routing, plus the default lifecycle
-  `project-scout → file-picker → (thinker if complex) → editor →
-  test-runner + code-reviewer`.
+  plan, parsed defensively (`parsePlan`) and validated by `normalizePlan`.
+  Falls back to the rules on any failure. The planning call's token usage is
+  captured into the run's total — no internal model call is ever omitted.
+- `ruleBasedPlanner(input)` — deterministic plan used by default and on LLM
+  failure. Deliberately lean: test/git/research/browser keyword routing, and
+  complex tasks get `thinker → editor` (strategy specialist + primary agent).
+  **No** scouts, pickers or reviewers run automatically.
 
-Simple tasks get few agents: `"run the tests"` → `[test-runner]`,
-`"commit my changes"` → `[git-curator]`,
-`"explain src/auth/session.ts"` → `[file-picker]`.
+Simple tasks never plan: `"fix the login bug"` → `[editor]` (one agent),
+`"run the tests"` → `[test-runner]` (deterministic),
+`"commit my changes"` → `[git-curator]`.
 
-## Permissions
+## Permissions & smart validation
 
 `src/agents/capabilities.ts` is the enforcement point:
 
 - `toolsForCapabilities(allTools, caps)` filters the tool registry down to the
   grant — a read-only role receives no `write_file`/`edit_file`/`run_command`.
-- `capabilitiesAreReadOnly()` is the defense-in-depth check the coordinator
-  applies before running a spec.
-- `commandPolicyForRole(role)` adds per-role rules inside `run_command`
-  (`src/tools/runCommand.ts`):
-  - **test-runner**: `npm test`, `npm run typecheck/build/lint`, `pytest`,
-    `go test`, `node --test`, … run without asking.
+- `commandPolicyForRole(role)` adds per-role rules inside `run_command`:
+  - **editor (Grace) + test-runner**: `npm test`, `npm run typecheck/build`,
+    `pytest`, `go test`, `node --test`, … run without asking — so the primary
+    agent validates proportional to the change (a typo needs no test run; a
+    code change runs the relevant typecheck/tests) without interrupting the
+    user. Danger-flagged commands still prompt.
   - **git-curator**: `git add`/`commit`/`rm`/`mv`/`restore`/`stash`/`tag`/
-    `clean` **always require user approval**, even though they are not in the
-    danger policy. `git push` stays behind the danger gate (user approval
-    required) and the prompt forbids pushing without explicit authorization.
+    `clean` always require user approval.
 
 The existing danger policy (`src/safety/policy.ts`) still applies to every
 agent's `run_command`.
 
 ## Context management
 
-- Each agent receives: role system prompt + the task + a compacted context
-  block (`Index:\n…` + prior results rendered by `compactResults`).
+- The primary agent receives: its system prompt + the task + a compact
+  `Index:` summary (the repository index) + compacted prior results — never
+  the whole repository or conversation.
 - `src/agents/compact.ts`: summaries are truncated, findings capped, and the
   oldest results dropped first when the token budget (default 4 000) is
   exceeded. Deterministic — safe for tests.
-- Subagent conversations live in a `MemorySession`
-  (`src/session/memory.ts`) — never written to `.zeesh/session.json`. Only the
-  Editor persists into the user's real session history.
-- Structured results (`src/agents/structured.ts`): most agents end with one
-  JSON object `{summary, files, findings, recommendations}`; parsing is
-  best-effort with a plain-text fallback.
+- The primary agent persists into the user's real session history
+  (`src/session/session.ts`); subagent conversations live in a throwaway
+  `MemorySession` — never written to `.zeesh/session.json`.
+- `src/agent/context.ts` trims the conversation window and truncates oversized
+  tool results so the working context stays compact.
 
 ## Project index
 
@@ -130,61 +160,65 @@ agent's `run_command`.
 - `ProjectIndexService.get()` returns a structural summary (type, PM,
   languages, entrypoints, test/build commands, test framework, top-level
   layout, key files, important symbols).
-- A cheap **fingerprint** (files/dirs up to depth 3 + `package.json` contents)
-  detects changes; the index is rebuilt lazily when it changes and the
-  coordinator invalidates it after the Editor runs.
-- The planner and repo-aware agents (scout, picker, thinker, editor) receive
-  the compact summary instead of a repository dump.
+- A cheap **fingerprint** detects changes; the index is rebuilt lazily and the
+  coordinator invalidates it after the primary agent edits files.
+- The primary agent receives the compact summary instead of a repository dump,
+  and uses `search_files`/`read_file` for anything task-specific.
 
-## Model routing
+## Model & provider routing
 
-`src/agents/modelRouter.ts`. Every spec carries a `modelTier`
-(`fast`/`default`/`strong`). A route resolves to `{ provider, model }`
-(`ModelRoute`). Today all agents share the configured provider and model; the
-coordinator consults the router through a pluggable
-`providerFactory(role, spec)`. To split models later (file-picker → fast
-model, thinker → strongest model), replace the factory/router — no agent code
-changes. `ZEESH_AGENT_MODEL` overrides the model for all roles and
-`ZEESH_PROVIDER` overrides the provider id (diagnostics/ops).
-
-The same abstraction drives the **server-side router**: the GRACE API's
-`/api/provider` builds its chain from `SERVER_ROUTING_PREFERENCE` (`nvidia`
-primary → `groq` fallback), each provider included only when its server-side
-key is configured. Fallback happens at the model-request boundary before any
-response is consumed, so it can never duplicate a tool execution — see
-`src/providers/fallback.ts` and `docs/api.md`.
+- The **primary agent uses the user's configured provider/model directly** —
+  one visible provider (`Grace · NVIDIA · qwen/…` in the CLI), no per-agent
+  model switching. Fallback stays automatic: the server-side router retries
+  NVIDIA → Groq at the model-request boundary, and the client loop retries
+  rate limits with bounded backoff.
+- Optional specialists resolve their own route through
+  `src/agents/modelRouter.ts` (`fast`/`coding`/`reasoning`/`review` tiers);
+  the optional planning call uses the `reasoning` tier.
+- The provider abstraction (`src/providers/types.ts` `AIProvider`) makes
+  adding a provider a registry + env change — no agent code changes.
+  **DeepSeek is implemented and registered** (`src/providers/deepseek.ts`,
+  OpenAI-compatible, `DEEPSEEK_API_KEY` server-side); wiring it into the
+  server chain is a one-line change to `SERVER_ROUTING_PREFERENCE`.
 
 ## CLI UX
 
 `src/cli/taskRunner.ts` wires the coordinator into both the REPL and one-shot
-mode:
+mode. The progress renderer (`src/cli/ui/progress.ts`) shows states, not a
+committee:
 
 ```
-· Planning…
-  → Project Scout
-  → File Picker
-  → Editor
-  → Test Runner
-  → Code Reviewer
-· Done
+Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
 
-<composed final answer>
-
-Changed files: …
-3 iteration(s) · 5 tool call(s) · 42s
-Session 1 / 6 · 41m 12s left · 12m / 6h used today
+· Grace is working…
+• → read_file src/auth/login.ts
+• → edit_file src/auth/login.ts
+• → run_command npm test
+→ Grace ✓ — Authentication added
 ```
 
-Only progress lines and summaries are shown — never agent chain-of-thought.
-The final answer, changed files, run stats, GRACE FREE quota line and usage
-reporting are identical in shape to the pre-coordinator CLI. Slash commands,
-the banner, and `/status` are unchanged.
+- Greetings render nothing and are answered directly (`Hey. What are we
+  building?`) — even without a provider configured.
+- Only high-level state is shown: working, exploring (tool bullets), running
+  commands, done. Never chain-of-thought.
+- The final block shows the composed answer, changed files, validation,
+  provider, time (`12.4s · 3 iteration(s) · 5 tool call(s) · 3 LLM call(s)`)
+  and the GRACE FREE quota line.
+
+## Instrumentation
+
+Every run records (in `CoordinatorRunResult.metrics`): total **LLM calls**
+(across the primary agent, optional specialists AND the optional planning
+call), time to first response, and time to first tool call. The CLI prints the
+LLM-call count in the Time section; the run's token usage aggregates every
+internal model call and is reported server-side (`/api/usage`) when logged in.
 
 ## Failure modes
 
 | Failure | Behavior |
 | ------- | -------- |
-| planner model call fails | rule-based fallback plan |
+| greeting / tests | handled locally — no provider involved |
+| complex planner model call fails | rule-based fallback plan |
 | an agent's provider call fails | agent marked `failed`, run continues |
 | an agent crashes unexpectedly | caught per agent, marked `failed`, run continues |
 | read-only role granted mutating tools | coordinator refuses (defense in depth) |
@@ -193,11 +227,13 @@ the banner, and `/status` are unchanged.
 
 ## Tests
 
-`tests/coordinator.test.ts` — routing, minimal-agent selection, sequential and
-parallel delegation, failure recovery, editor modifications, read-only
-boundaries, browser unavailability, usage aggregation.
+`tests/coordinator.test.ts` — fast-router classification, conversation (0 LLM
+calls), deterministic test runs, single-agent default, complex planning +
+optional specialists, failure recovery, editor modifications, read-only
+boundaries, browser unavailability, usage aggregation + metrics.
 `tests/agents.test.ts` — capability grants, command policies, structured
 parsing, context compaction, memory sessions.
 `tests/projectIndex.test.ts` — build/cache/fingerprint invalidation.
-`tests/cli.coordinator.test.ts` — CLI E2E progress UX in one-shot and
-interactive modes.
+`tests/cli.coordinator.test.ts` — CLI E2E: a simple task runs the primary
+agent only (no planner/scout/picker/reviewer), greetings make zero provider
+calls, interactive flow returns to the prompt.

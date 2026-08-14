@@ -53,9 +53,17 @@ const GIT_MUTATE_PREFIXES = [
   'git add', 'git commit', 'git rm', 'git mv', 'git restore', 'git stash', 'git tag', 'git clean',
 ];
 
-/** Per-role command policy applied to run_command inside the agent's tools. */
+/**
+ * Per-role command policy applied to run_command inside the agent's tools.
+ *
+ * The primary agent (editor) gets the same test-command allowlist as the test
+ * runner, so smart validation works: running npm test / typecheck / build
+ * after an edit never interrupts the user, while genuinely dangerous commands
+ * still prompt.
+ */
 export function commandPolicyForRole(role: AgentRole): CommandPolicy | undefined {
   switch (role) {
+    case 'editor':
     case 'test-runner':
       return { allowPrefixes: TEST_PREFIXES };
     case 'git-curator':

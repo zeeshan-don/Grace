@@ -1,4 +1,5 @@
 import { Coordinator } from '../agents/coordinator.ts';
+import { classifyTask, conversationReply } from '../agents/fastRouter.ts';
 import { RoleModelRouter } from '../agents/roleRouter.ts';
 import type { CoordinatorRunResult } from '../agents/types.ts';
 import { reportRunUsage } from '../auth/reporting.ts';
@@ -30,6 +31,14 @@ const indexByRuntime = new WeakMap<object, ProjectIndexService>();
  * the GRACE FREE quota line and usage reporting.
  */
 export async function runTask(runtime: Runtime, input: string, opts: TaskRunOptions = {}): Promise<number> {
+  // Greetings never need a provider, an index or any agent — answer instantly.
+  const route = classifyTask(input).route;
+  if (route === 'conversation') {
+    console.log('');
+    console.log(conversationReply(input));
+    return 0;
+  }
+
   if (!runtime.provider) {
     console.log(renderError(runtime.providerError ?? 'No AI provider configured.'));
     return 1;
@@ -43,16 +52,21 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
 
   console.log('');
   const startedAt = Date.now();
-  const progress = new ProgressRenderer({ verbose: opts.verbose ?? isVerbose() });
-  // Genuine role-based routing: every subagent resolves its own provider +
-  // model through the Model Router (fast/coding/reasoning/review tiers). The
-  // coordinator's own planning call uses the REASONING tier.
+  // The primary agent uses the user's configured provider/model directly — one
+  // visible provider, no per-role switching. Optional specialists (complex
+  // plans) still resolve their own route through the Model Router.
   const roleRouter = new RoleModelRouter(runtime);
+  const served = runtime.provider instanceof RemoteProvider ? (runtime.provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
+  const progress = new ProgressRenderer({
+    verbose: opts.verbose ?? isVerbose(),
+    providerLabel: served?.label ?? runtime.provider.label,
+    model: runtime.provider.getModel().id,
+  });
   const coordinator = new Coordinator({
     runtime,
     projectIndex: index,
     onEvent: (e) => progress.event(e),
-    providerFactory: (role, spec) => roleRouter.providerFor(role, spec),
+    providerFactory: (role, spec) => (role === 'editor' ? runtime.provider : roleRouter.providerFor(role, spec)),
     plannerProvider: roleRouter.plannerProvider(),
   });
 
@@ -71,6 +85,12 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
 
   // The editor may have changed files — make sure the next task sees a fresh index.
   if (result.changedFiles.length > 0) index.invalidate();
+
+  // A greeting is answered directly — no result circus.
+  if (result.route === 'conversation') {
+    console.log(result.finalAnswer);
+    return 0;
+  }
 
   console.log(renderTaskResult({ result, runtime, executionTimeMs, verbose: opts.verbose ?? isVerbose() }));
 

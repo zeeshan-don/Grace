@@ -51,7 +51,10 @@ export interface Symbols {
   check: string;
   cross: string;
   warn: string;
+  /** Small pending/working bullet ("· Grace is working…"). */
   bullet: string;
+  /** Settled progress bullet ("• Exploring the project"). */
+  dot: string;
   arrow: string;
   ellipsis: string;
   cornerTl: string;
@@ -73,6 +76,7 @@ export function symbols(platform: Platform = process.platform): Symbols {
       cross: '✗',
       warn: '!',
       bullet: '·',
+      dot: '•',
       arrow: '→',
       ellipsis: '…',
       cornerTl: '┌',
@@ -90,6 +94,7 @@ export function symbols(platform: Platform = process.platform): Symbols {
     cross: '[x]',
     warn: '[!]',
     bullet: '-',
+    dot: '*',
     arrow: '->',
     ellipsis: '...',
     cornerTl: '+',

@@ -1,12 +1,13 @@
-import type { AIProvider } from '../providers/types.ts';
+import type { AIProvider, ChatMessage, ChatOptions, ChatResult, Usage } from '../providers/types.ts';
 import { ProjectIndexService } from '../project/index.ts';
 import type { Runtime } from '../runtime.ts';
 import { MemorySession } from '../session/memory.ts';
 import { createTools } from '../tools/registry.ts';
 import { browserAvailability } from './browser.ts';
 import { capabilitiesAreReadOnly, commandPolicyForRole, toolsForCapabilities } from './capabilities.ts';
+import { classifyTask, conversationReply, type TaskRoute } from './fastRouter.ts';
 import { compactResults, compactText } from './compact.ts';
-import { llmPlanner, ruleBasedPlanner, normalizePlan } from './planner.ts';
+import { DEFAULT_PRIMARY_PLAN, llmPlanner, normalizePlan, ruleBasedPlanner } from './planner.ts';
 import { AGENT_SPECS, ALL_AGENT_ROLES } from './specs.ts';
 import { runSubagent } from './subagent.ts';
 import { runDeterministicTestRunner } from './testRunner.ts';
@@ -17,19 +18,21 @@ import type {
   CoordinatorEvent,
   CoordinatorRunResult,
   Planner,
+  PlannerInput,
+  RunMetrics,
   SubagentResult,
 } from './types.ts';
 
 export interface CoordinatorDeps {
   runtime: Runtime;
   /**
-   * Per-role provider factory (model routing extension point). Defaults to
-   * sharing the runtime provider, so every agent uses the user's configured
-   * model. Return null to fall back to the runtime provider. NO_LLM roles
-   * are handled deterministically and never reach this factory.
+   * Per-role provider factory (model routing extension point). The primary
+   * agent (editor) normally uses the runtime's configured provider directly;
+   * optional specialists may resolve their own model here. Return null to
+   * fall back to the runtime provider. NO_LLM roles are deterministic.
    */
   providerFactory?: (role: AgentRole, spec: AgentSpec) => AIProvider | null;
-  /** Provider for the coordinator's own planning call (REASONING tier). */
+  /** Provider for the coordinator's own planning call (complex tasks only). */
   plannerProvider?: AIProvider | null;
   /** Replaceable planner (tests inject scripted plans). */
   planner?: Planner;
@@ -57,16 +60,62 @@ interface Accumulator {
   totalTokens: number;
 }
 
+interface RunClock {
+  startedAt: number;
+  firstStatusAt?: number;
+  firstToolAt?: number;
+}
+
+function mergeUsage(acc: Accumulator, usage: Usage | undefined): void {
+  if (!usage) return;
+  acc.inputTokens += usage.inputTokens;
+  acc.outputTokens += usage.outputTokens;
+  acc.totalTokens += usage.totalTokens;
+}
+
 /**
- * The GRACE coordinator.
+ * Wrap a provider so every successful chat call reports its usage + counts
+ * one LLM call (used to capture the optional planning call's tokens — no
+ * internal model call is ever omitted from the run's usage).
+ */
+function trackedProvider(
+  base: AIProvider | null,
+  onResult: (res: ChatResult) => void,
+  onCall: () => void,
+): AIProvider | null {
+  if (!base) return null;
+  return new Proxy(base, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === 'chat' && typeof value === 'function') {
+        return async (messages: ChatMessage[], options?: ChatOptions): Promise<ChatResult> => {
+          onCall();
+          const res = (await value.call(target, messages, options)) as ChatResult;
+          onResult(res);
+          return res;
+        };
+      }
+      return value;
+    },
+  }) as AIProvider;
+}
+
+/**
+ * The GRACE coordinator (primary-agent architecture).
  *
- * Receives a task, plans which specialized agents are needed (and in what
- * order), executes the plan — running independent agents in parallel — and
- * composes a concise final answer from the structured results. Context between
- * steps is always compacted to a token budget; agent failures never abort the
- * run; the browser agent is reported "unavailable" rather than silently
- * broken. The coordinator NEVER sends the whole repository or conversation to
- * any agent.
+ *   User request
+ *      ↓
+ *   Fast local router (deterministic — no model call)
+ *      ↓
+ *   conversation → local reply (0 LLM calls)   tests → deterministic runner (0 LLM calls)
+ *      ↓
+ *   Primary Agent (default) ← optional planning for complex tasks
+ *      ↓
+ *   Tools: search → read → edit/write → run commands → fix errors → repeat
+ *
+ * The primary agent is the default execution path. Specialist subagents only
+ * run when a complex plan explicitly includes them; the coordinator stays the
+ * orchestrator and composes the final answer from the agent results.
  */
 export class Coordinator {
   private readonly deps: CoordinatorDeps;
@@ -80,43 +129,77 @@ export class Coordinator {
   }
 
   async run(task: string): Promise<CoordinatorRunResult> {
+    const startedAt = Date.now();
+    const clock: RunClock = { startedAt };
+    // All events flow through this wrapper so timing instrumentation is cheap
+    // and centralized (spec: measure time to first response / first tool call).
+    const emit = (e: CoordinatorEvent): void => {
+      if (e.type === 'status') {
+        if (clock.firstStatusAt === undefined) clock.firstStatusAt = Date.now();
+        if (clock.firstToolAt === undefined && e.message.trim().startsWith('→')) clock.firstToolAt = Date.now();
+      }
+      this.deps.onEvent?.(e);
+    };
+
+    const route = classifyTask(task).route;
+    emit({ type: 'route', route });
+
+    // Conversational input: answered locally — zero model calls, zero tools,
+    // zero repository scanning.
+    if (route === 'conversation') {
+      emit({ type: 'done' });
+      return {
+        task,
+        route,
+        plan: { steps: [], notes: 'conversation' },
+        results: [],
+        finalAnswer: conversationReply(task),
+        changedFiles: [],
+        iterations: 0,
+        toolCalls: 0,
+        metrics: { llmCalls: 0 },
+      };
+    }
+
+    // Test runs: the deterministic runner — zero model calls.
+    if (route === 'tests') {
+      return this.runTests(task, emit);
+    }
+
     const { runtime } = this.deps;
-    const onEvent = this.deps.onEvent;
-
-    onEvent?.({ type: 'planning' });
-
     const index = this.index.get();
     const browser = browserAvailability();
     const unavailable: AgentRole[] = browser.available ? [] : ['browser-use'];
     const available = ALL_AGENT_ROLES.filter((r) => !unavailable.includes(r));
 
-    const planner = this.deps.planner ?? llmPlanner(this.deps.plannerProvider ?? runtime.provider);
-    const plannerInput = { task, indexSummary: index.summary, availableAgents: available, unavailableAgents: unavailable };
+    // Planning is optional and reserved for complex tasks. Everything else
+    // starts the primary agent immediately.
     let plan: AgentPlan;
-    try {
-      // Normalize against ALL known roles: unknown roles are dropped, but
-      // unavailable roles are kept so runOne can report them cleanly.
-      plan = normalizePlan(await planner(plannerInput), ALL_AGENT_ROLES);
-    } catch {
-      plan = normalizePlan(ruleBasedPlanner(plannerInput), ALL_AGENT_ROLES);
+    let plannerCalls = 0;
+    let plannerUsage: Usage | undefined;
+    if (route === 'complex') {
+      emit({ type: 'planning' });
+      const resolved = await this.resolvePlan(task, index.summary, available, unavailable, () => (plannerCalls += 1), (res) => (plannerUsage = res.usage));
+      plan = resolved;
+    } else {
+      plan = DEFAULT_PRIMARY_PLAN;
     }
 
     const acc: Accumulator = { changedFiles: new Set(), iterations: 0, toolCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    mergeUsage(acc, plannerUsage);
     const results: SubagentResult[] = [];
 
     for (let s = 0; s < plan.steps.length; s += 1) {
       const step = plan.steps[s] as AgentPlan['steps'][number];
-      onEvent?.({ type: 'step-start', step: s + 1, total: plan.steps.length });
-      // Narrow context: only the compacted summaries of prior steps plus the
-      // repository index — never raw tool dumps or full conversations.
+      emit({ type: 'step-start', step: s + 1, total: plan.steps.length });
+      // Narrow context: compacted summaries of prior steps + the repository
+      // index — never raw tool dumps or full conversations.
       const contextText = compactResults(results, this.deps.resultTokenBudget ?? DEFAULT_RESULT_BUDGET);
-      this.merge(acc, results, await this.runStep(step.agents, task, contextText, index.summary, unavailable));
+      this.merge(acc, results, await this.runStep(step.agents, task, contextText, index.summary, unavailable, emit));
     }
 
-    // Bounded review→fix loop: when the reviewer found actionable issues, the
-    // editor gets one more pass with the review findings, then the test runner
-    // re-verifies. Kept deliberately to one round (fixRounds) so it can never
-    // loop forever.
+    // Bounded review→fix loop: only when a reviewer actually ran with
+    // actionable findings (never by default — review stays optional).
     const fixRounds = this.deps.fixRounds ?? 1;
     for (let round = 0; round < fixRounds; round += 1) {
       const reviewer = results.find((r) => r.agent === 'code-reviewer' && r.status === 'completed');
@@ -124,19 +207,20 @@ export class Coordinator {
       const needsFix = editorRan && reviewer !== undefined && reviewer.recommendations.length > 0;
       if (!needsFix) break;
       const contextText = compactResults(results, this.deps.resultTokenBudget ?? DEFAULT_RESULT_BUDGET);
-      this.merge(acc, results, await this.runStep(['editor'], `${task}\n\nAddress the review findings above.`, contextText, index.summary, unavailable));
+      this.merge(acc, results, await this.runStep(['editor'], `${task}\n\nAddress the review findings above.`, contextText, index.summary, unavailable, emit));
       const testPlanned = plan.steps.some((s) => s.agents.includes('test-runner'));
       if (testPlanned) {
         const verifyCtx = compactResults(results, this.deps.resultTokenBudget ?? DEFAULT_RESULT_BUDGET);
-        this.merge(acc, results, await this.runStep(['test-runner'], `${task}\n\nRe-run the relevant tests after the fix.`, verifyCtx, index.summary, unavailable));
+        this.merge(acc, results, await this.runStep(['test-runner'], `${task}\n\nRe-run the relevant tests after the fix.`, verifyCtx, index.summary, unavailable, emit));
       }
     }
 
     const finalAnswer = composeFinalAnswer(results, unavailable);
-    onEvent?.({ type: 'done' });
+    emit({ type: 'done' });
 
     return {
       task,
+      route,
       plan,
       results,
       finalAnswer,
@@ -144,8 +228,70 @@ export class Coordinator {
       iterations: acc.iterations,
       toolCalls: acc.toolCalls,
       usage: acc.totalTokens > 0 ? { inputTokens: acc.inputTokens, outputTokens: acc.outputTokens, totalTokens: acc.totalTokens } : undefined,
+      metrics: this.buildMetrics(clock, acc, plannerCalls),
     };
   }
+
+  // -------------------------------------------------------------------------
+  // Paths that never touch a model
+  // -------------------------------------------------------------------------
+
+  private async runTests(task: string, emit: (e: CoordinatorEvent) => void): Promise<CoordinatorRunResult> {
+    const spec = AGENT_SPECS['test-runner'] as AgentSpec;
+    emit({ type: 'agent-start', role: 'test-runner', label: spec.label });
+    const result = await runDeterministicTestRunner({
+      projectRoot: this.deps.runtime.root,
+      project: this.deps.runtime.project,
+    });
+    emit({
+      type: 'agent-done',
+      role: 'test-runner',
+      label: spec.label,
+      status: result.status,
+      summary: result.summary,
+      error: result.error,
+    });
+    emit({ type: 'done' });
+    return {
+      task,
+      route: 'tests',
+      plan: { steps: [{ agents: ['test-runner'], reason: 'Run the tests.' }] },
+      results: [result],
+      finalAnswer: composeFinalAnswer([result], []),
+      changedFiles: [],
+      iterations: 0,
+      toolCalls: 0,
+      metrics: { llmCalls: 0 },
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Optional planning (complex tasks only)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve the plan for a complex task. An injected planner (tests) wins;
+   * otherwise the LLM planner runs on the reasoning tier and falls back to the
+   * deterministic rule-based planner. The planning call's usage is captured so
+   * no internal model call is omitted from the run total.
+   */
+  private async resolvePlan(
+    task: string,
+    indexSummary: string,
+    available: AgentRole[],
+    unavailable: AgentRole[],
+    onCall: () => void,
+    onResult: (res: ChatResult) => void,
+  ): Promise<AgentPlan> {
+    const input: PlannerInput = { task, indexSummary, availableAgents: available, unavailableAgents: unavailable };
+    if (this.deps.planner) return normalizePlan(await this.deps.planner(input), ALL_AGENT_ROLES);
+    const provider = trackedProvider(this.deps.plannerProvider ?? this.deps.runtime.provider, onResult, onCall);
+    return llmPlanner(provider)(input);
+  }
+
+  // -------------------------------------------------------------------------
+  // Plan execution
+  // -------------------------------------------------------------------------
 
   /** Fold a step's results into the shared accumulator + results list. */
   private merge(acc: Accumulator, results: SubagentResult[], stepResults: SubagentResult[]): void {
@@ -153,11 +299,7 @@ export class Coordinator {
       results.push(r);
       acc.iterations += r.iterations;
       acc.toolCalls += r.toolCalls;
-      if (r.usage) {
-        acc.inputTokens += r.usage.inputTokens;
-        acc.outputTokens += r.usage.outputTokens;
-        acc.totalTokens += r.usage.totalTokens;
-      }
+      mergeUsage(acc, r.usage);
       // Only agents that actually hold the write capability can have changed
       // files — a read-only agent's spurious/attempted write must never show
       // up in the final "Changed files:" list.
@@ -175,6 +317,7 @@ export class Coordinator {
     contextText: string,
     indexSummary: string,
     unavailable: AgentRole[],
+    emit: (e: CoordinatorEvent) => void,
   ): Promise<SubagentResult[]> {
     const cap = Math.max(1, Math.min(this.deps.maxConcurrency ?? DEFAULT_CONCURRENCY, roles.length));
     const out: SubagentResult[] = new Array<SubagentResult>(roles.length);
@@ -184,7 +327,7 @@ export class Coordinator {
       while (next < roles.length) {
         const i = next;
         next += 1;
-        out[i] = await this.runOne(roles[i] as AgentRole, task, contextText, indexSummary, unavailable);
+        out[i] = await this.runOne(roles[i] as AgentRole, task, contextText, indexSummary, unavailable, emit);
       }
     };
 
@@ -198,12 +341,13 @@ export class Coordinator {
     contextText: string,
     indexSummary: string,
     unavailable: AgentRole[],
+    emit: (e: CoordinatorEvent) => void,
   ): Promise<SubagentResult> {
     const { runtime } = this.deps;
     const spec = AGENT_SPECS[role] as AgentSpec;
-    const onEvent = this.deps.onEvent;
 
-    onEvent?.({ type: 'agent-start', role, label: spec.label });
+    emit({ type: 'agent-start', role, label: spec.label });
+    if (role === 'editor') emit({ type: 'working' });
 
     // Unavailable roles (browser-use without a browser backend) are reported
     // cleanly instead of silently doing nothing.
@@ -222,24 +366,24 @@ export class Coordinator {
         iterations: 0,
         toolCalls: 0,
       };
-      onEvent?.({ type: 'agent-done', role, label: spec.label, status: 'unavailable', summary: res.summary, error: reason });
+      emit({ type: 'agent-done', role, label: spec.label, status: 'unavailable', summary: res.summary, error: reason });
       return res;
     }
 
     // Defense in depth: a read-only spec must never carry write/execute tools.
     if (spec.readOnly && !capabilitiesAreReadOnly(spec.capabilities)) {
-      return this.fail(spec, 'Permission boundary violation: read-only role granted mutating tools.');
+      return this.fail(spec, 'Permission boundary violation: read-only role granted mutating tools.', emit);
     }
 
     // NO_LLM roles (e.g. the test runner) run deterministically — no model
     // request is consumed and no provider is built.
     if (spec.modelTier === 'no_llm') {
-      return this.runNoLlm(role, spec);
+      return this.runNoLlm(role, spec, emit);
     }
 
     try {
       const provider = this.deps.providerFactory ? (this.deps.providerFactory(role, spec) ?? runtime.provider) : runtime.provider;
-      if (!provider) return this.fail(spec, 'No AI provider is configured.');
+      if (!provider) return this.fail(spec, 'No AI provider is configured.', emit);
 
       const session = role === 'editor' ? runtime.session : new MemorySession();
       const tools = toolsForCapabilities(
@@ -252,8 +396,9 @@ export class Coordinator {
         spec.capabilities,
       );
 
-      // Repo-aware roles also receive the compact index summary.
-      const context = ['project-scout', 'file-picker', 'thinker', 'editor'].includes(role)
+      // Repo-aware roles (the primary agent + strategy specialists) receive
+      // the compact index summary so they never re-scan the whole repository.
+      const context = ['editor', 'thinker', 'project-scout'].includes(role)
         ? `Index:\n${compactText(indexSummary, 2_000)}\n\n${contextText}`
         : contextText;
 
@@ -266,17 +411,18 @@ export class Coordinator {
           session,
           undo: runtime.undo,
           askPermission: this.serializedAsk,
+          onStatus: (msg) => emit({ type: 'status', message: msg }),
         },
         spec,
         task,
         context,
       );
 
-      onEvent?.({ type: 'agent-done', role, label: spec.label, status: result.status, summary: result.summary, error: result.error });
+      emit({ type: 'agent-done', role, label: spec.label, status: result.status, summary: result.summary, error: result.error });
       return result;
     } catch (err) {
       // Per-agent recovery: an unexpected crash must never abort the run.
-      return this.fail(spec, `Agent crashed: ${(err as Error).message ?? String(err)}`);
+      return this.fail(spec, `Agent crashed: ${(err as Error).message ?? String(err)}`, emit);
     }
   }
 
@@ -284,13 +430,13 @@ export class Coordinator {
    * Deterministic execution for NO_LLM roles. Today only the test runner has
    * one; unknown roles fail cleanly instead of silently doing nothing.
    */
-  private async runNoLlm(role: AgentRole, spec: AgentSpec): Promise<SubagentResult> {
+  private async runNoLlm(role: AgentRole, spec: AgentSpec, emit: (e: CoordinatorEvent) => void): Promise<SubagentResult> {
     if (role === 'test-runner') {
       const result = await runDeterministicTestRunner({
         projectRoot: this.deps.runtime.root,
         project: this.deps.runtime.project,
       });
-      this.deps.onEvent?.({
+      emit({
         type: 'agent-done',
         role,
         label: spec.label,
@@ -300,10 +446,10 @@ export class Coordinator {
       });
       return result;
     }
-    return this.fail(spec, `Role "${role}" is marked no_llm but has no deterministic executor.`);
+    return this.fail(spec, `Role "${role}" is marked no_llm but has no deterministic executor.`, emit);
   }
 
-  private fail(spec: AgentSpec, error: string): SubagentResult {
+  private fail(spec: AgentSpec, error: string, emit: (e: CoordinatorEvent) => void): SubagentResult {
     const res: SubagentResult = {
       agent: spec.role,
       label: spec.label,
@@ -317,7 +463,7 @@ export class Coordinator {
       iterations: 0,
       toolCalls: 0,
     };
-    this.deps.onEvent?.({ type: 'agent-done', role: spec.role, label: spec.label, status: 'failed', summary: error, error });
+    emit({ type: 'agent-done', role: spec.role, label: spec.label, status: 'failed', summary: error, error });
     return res;
   }
 
@@ -333,6 +479,14 @@ export class Coordinator {
       release();
     }
   };
+
+  /** Build the run's instrumentation record. */
+  private buildMetrics(clock: RunClock, acc: Accumulator, plannerCalls: number): RunMetrics {
+    const metrics: RunMetrics = { llmCalls: plannerCalls + acc.iterations };
+    if (clock.firstStatusAt !== undefined) metrics.timeToFirstResponseMs = clock.firstStatusAt - clock.startedAt;
+    if (clock.firstToolAt !== undefined) metrics.timeToFirstToolCallMs = clock.firstToolAt - clock.startedAt;
+    return metrics;
+  }
 }
 
 /** Compose the user-facing final answer from the structured results. */
@@ -371,3 +525,6 @@ export function composeFinalAnswer(results: SubagentResult[], unavailable: Agent
 
   return parts.filter(Boolean).join('\n\n');
 }
+
+/** Re-export the route type for consumers. */
+export type { TaskRoute };

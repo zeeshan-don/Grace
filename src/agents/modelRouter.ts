@@ -91,6 +91,16 @@ export const TIER_MODELS: Record<string, Record<ModelTier, readonly string[]>> =
     review: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],
     no_llm: [],
   },
+  // DeepSeek is fully implemented and registered; adding it to the server
+  // routing chain is a one-line change (SERVER_ROUTING_PREFERENCE + the
+  // DEEPSEEK_API_KEY env mapping in src/api/providers.ts).
+  deepseek: {
+    fast: ['deepseek-chat'],
+    coding: ['deepseek-chat', 'deepseek-reasoner'],
+    reasoning: ['deepseek-reasoner', 'deepseek-chat'],
+    review: ['deepseek-chat', 'deepseek-reasoner'],
+    no_llm: [],
+  },
 };
 
 /** All model ids the tables know for a provider (deduped). */

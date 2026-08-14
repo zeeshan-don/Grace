@@ -1,12 +1,11 @@
 /**
- * CLI E2E for the subagent coordinator (Milestone 14).
+ * CLI E2E for the primary-agent coordinator (redesign).
  *
- * With the scripted mock backend the LLM planner cannot produce a parseable
- * plan, so the deterministic fallback plan runs — exercising the full
- * coordinator lifecycle (scout → picker → editor → test-runner + reviewer)
- * against the real CLI entry point. These tests assert the new concise
- * progress UX (agent labels, arrows, final summary) and that the existing
- * one-shot/interactive flows still work.
+ * With the scripted mock backend, a simple coding task runs through the
+ * primary agent directly — no planner, no Project Scout, no File Picker, no
+ * review committee — and a greeting is answered locally with zero provider
+ * calls. These tests assert the new concise progress UX (working line,
+ * bullets, single agent) and that the one-shot/interactive flows still work.
  */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -47,13 +46,15 @@ afterEach(() => {
 });
 
 /** Mock backend: scripted 2-turn agent (write_file then completion) per agent. */
-function startBackend(): Promise<string> {
+function startBackend(): Promise<{ baseUrl: string; requestCount: () => number }> {
+  let providerRequests = 0;
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c) => chunks.push(c as Buffer));
     req.on('end', () => {
       const body = chunks.length > 0 ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages?: Array<{ role: string }> }) : {};
       if (req.url === '/api/provider' && req.method === 'POST') {
+        providerRequests += 1;
         const hasToolResult = (body.messages ?? []).some((m) => m.role === 'tool');
         if (!hasToolResult) {
           res.statusCode = 200;
@@ -86,7 +87,7 @@ function startBackend(): Promise<string> {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
       running.push(server);
-      resolve(`http://127.0.0.1:${port}`);
+      resolve({ baseUrl: `http://127.0.0.1:${port}`, requestCount: () => providerRequests });
     });
   });
 }
@@ -133,33 +134,46 @@ function runCli(args: string[], opts: { cwd?: string; stdin?: string; timeout?: 
   });
 }
 
-test('one-shot: coordinator progress lines appear and the task completes', async () => {
-  const baseUrl = await startBackend();
-  writeSession(baseUrl);
+test('one-shot: a simple task runs the primary agent only (no planner/scout/picker)', async () => {
+  const backend = await startBackend();
+  writeSession(backend.baseUrl);
   const work = freshDir();
   const { code, stdout } = await runCli(['Create hello.py and run it'], { cwd: work });
 
   assert.equal(code, 0);
-  assert.ok(existsSync(join(work, 'hello.py')), 'file written through the coordinator flow');
-  // Progress UX: agent labels with arrows, parallel steps as a tree, no raw
-  // chain-of-thought.
-  assert.match(stdout, /→ Project Scout/);
-  assert.match(stdout, /→ File Picker/);
-  assert.match(stdout, /→ Editor/);
-  // Test Runner + Code Reviewer ran in parallel → drawn as a tree block.
-  assert.match(stdout, /┌─ Test Runner/);
-  assert.match(stdout, /└─ Code Reviewer/);
-  assert.match(stdout, /✓/);
+  assert.ok(existsSync(join(work, 'hello.py')), 'file written through the primary-agent flow');
+  // Progress UX: the primary agent line + provider header, no committee.
+  assert.match(stdout, /Grace · GRACE backend/);
+  assert.match(stdout, /· Grace is working/);
+  assert.match(stdout, /→ Grace ✓/);
+  assert.ok(!stdout.includes('Project Scout'), 'no Project Scout for a simple task');
+  assert.ok(!stdout.includes('File Picker'), 'no File Picker for a simple task');
+  assert.ok(!stdout.includes('Code Reviewer'), 'no Code Reviewer for a simple task');
   // Structured result sections.
   assert.match(stdout, /Files changed/);
   assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /iteration\(s\)/);
+  assert.match(stdout, /LLM call/);
   assert.match(stdout, /Provider/);
 });
 
-test('interactive: coordinator runs a task then returns to the prompt', async () => {
-  const baseUrl = await startBackend();
-  writeSession(baseUrl);
+test('one-shot: a greeting is answered locally with zero provider calls', async () => {
+  const backend = await startBackend();
+  writeSession(backend.baseUrl);
+  const before = backend.requestCount();
+  const work = freshDir();
+  const { code, stdout } = await runCli(['hi'], { cwd: work });
+
+  assert.equal(code, 0);
+  assert.match(stdout, /Hey\. What are we building\?/);
+  assert.equal(backend.requestCount(), before, 'a greeting must not touch the provider');
+  assert.ok(!existsSync(join(work, 'hello.py')), 'no file work for a greeting');
+  assert.ok(!stdout.includes('Files changed'), 'no result circus for a greeting');
+});
+
+test('interactive: primary-agent task runs then returns to the prompt', async () => {
+  const backend = await startBackend();
+  writeSession(backend.baseUrl);
   const work = freshDir();
   const { code, stdout } = await runCli([], {
     cwd: work,
@@ -168,7 +182,7 @@ test('interactive: coordinator runs a task then returns to the prompt', async ()
 
   assert.equal(code, 0);
   assert.ok(existsSync(join(work, 'hello.py')), 'interactive task wrote the file');
-  assert.match(stdout, /→ Editor/);
+  assert.match(stdout, /→ Grace ✓/);
   assert.match(stdout, /Files changed/);
   assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /Not a git repository/, '/status ran after the task');
@@ -178,7 +192,7 @@ test('interactive: coordinator runs a task then returns to the prompt', async ()
   assert.match(stdout, /Goodbye/);
 });
 
-test('one-shot: no provider still errors cleanly (coordinator never starts)', async () => {
+test('one-shot: no provider still errors cleanly (primary agent never starts)', async () => {
   clearSession(join(home, '.zeesh', 'auth.json'));
   const { code, stdout } = await runCli(['Fix the login bug']);
   assert.equal(code, 1);

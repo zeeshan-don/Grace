@@ -112,29 +112,22 @@ test('supportsUnicode: modern terminal markers enable Unicode on Windows', () =>
 // Progress renderer
 // ---------------------------------------------------------------------------
 
-/** A realistic coordinator run: planning → flat agents → parallel final step. */
+/** A realistic primary-agent run: working line → status bullets → done. */
 function scriptedRun(): CoordinatorEvent[] {
   return [
-    { type: 'planning' },
-    { type: 'step-start', step: 1, total: 4 },
-    { type: 'agent-start', role: 'project-scout', label: 'Project Scout' },
-    { type: 'agent-done', role: 'project-scout', label: 'Project Scout', status: 'completed', summary: 'Mapped the repository layout' },
-    { type: 'step-start', step: 2, total: 4 },
-    { type: 'agent-start', role: 'file-picker', label: 'File Picker' },
-    { type: 'agent-done', role: 'file-picker', label: 'File Picker', status: 'completed', summary: '3 relevant files' },
-    { type: 'step-start', step: 3, total: 4 },
-    { type: 'agent-start', role: 'editor', label: 'Editor' },
-    { type: 'agent-done', role: 'editor', label: 'Editor', status: 'completed', summary: 'Implemented the change' },
-    { type: 'step-start', step: 4, total: 4 },
-    { type: 'agent-start', role: 'test-runner', label: 'Test Runner' },
-    { type: 'agent-start', role: 'code-reviewer', label: 'Code Reviewer' },
-    { type: 'agent-done', role: 'test-runner', label: 'Test Runner', status: 'completed', summary: '215/215 tests passed' },
-    { type: 'agent-done', role: 'code-reviewer', label: 'Code Reviewer', status: 'completed', summary: 'No critical issues' },
+    { type: 'route', route: 'coding' },
+    { type: 'step-start', step: 1, total: 1 },
+    { type: 'agent-start', role: 'editor', label: 'Grace' },
+    { type: 'working' },
+    { type: 'status', message: '→ read_file src/auth/login.ts' },
+    { type: 'status', message: '→ edit_file src/auth/login.ts' },
+    { type: 'status', message: '→ run_command npm test' },
+    { type: 'agent-done', role: 'editor', label: 'Grace', status: 'completed', summary: 'Authentication added' },
     { type: 'done' },
   ];
 }
 
-function runThrough(events: CoordinatorEvent[], opts: { live?: boolean; verbose?: boolean } = {}): string {
+function runThrough(events: CoordinatorEvent[], opts: { live?: boolean; verbose?: boolean; providerLabel?: string; model?: string } = {}): string {
   const writes: string[] = [];
   const renderer = new ProgressRenderer({ out: { write: (t) => writes.push(t) }, live: false, ...opts });
   for (const e of events) renderer.event(e);
@@ -142,65 +135,68 @@ function runThrough(events: CoordinatorEvent[], opts: { live?: boolean; verbose?
   return writes.join('');
 }
 
-test('progress: non-live output is deterministic, flat → parallel tree, no chain-of-thought', () => {
-  const out = runThrough(scriptedRun());
+test('progress: non-live output is deterministic — provider line, working, bullets, done', () => {
+  const out = runThrough(scriptedRun(), { providerLabel: 'NVIDIA NIM', model: 'qwen/qwen2.5-coder-32b-instruct' });
   const lines = out.split('\n').filter(Boolean);
   assert.deepEqual(lines, [
-    '  · Planning…',
-    '  → Project Scout ✓ — Mapped the repository layout',
-    '  → File Picker ✓ — 3 relevant files',
-    '  → Editor ✓ — Implemented the change',
-    '  ┌─ Test Runner ✓ — 215/215 tests passed',
-    '  └─ Code Reviewer ✓ — No critical issues',
+    '  Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct',
+    '  · Grace is working…',
+    '  • → read_file src/auth/login.ts',
+    '  • → edit_file src/auth/login.ts',
+    '  • → run_command npm test',
+    '  → Grace ✓ — Authentication added',
   ]);
+  assert.ok(!out.includes('Project Scout'), 'no committee of agents is printed');
 });
 
 test('progress: failed and unavailable agents render ✗ and ! marks', () => {
   const events: CoordinatorEvent[] = [
-    { type: 'planning' },
+    { type: 'route', route: 'coding' },
     { type: 'step-start', step: 1, total: 1 },
-    { type: 'agent-start', role: 'editor', label: 'Editor' },
-    { type: 'agent-done', role: 'editor', label: 'Editor', status: 'failed', summary: 'crash', error: 'The provider rejected the request' },
+    { type: 'agent-start', role: 'editor', label: 'Grace' },
+    { type: 'working' },
+    { type: 'agent-done', role: 'editor', label: 'Grace', status: 'failed', summary: 'crash', error: 'The provider rejected the request' },
     { type: 'agent-start', role: 'browser-use', label: 'Browser' },
     { type: 'agent-done', role: 'browser-use', label: 'Browser', status: 'unavailable', summary: 'No browser backend' },
     { type: 'done' },
   ];
   const out = runThrough(events);
-  assert.match(out, /→ Editor ✗ — The provider rejected the request/);
+  assert.match(out, /→ Grace ✗ — The provider rejected the request/);
   assert.match(out, /→ Browser ! — No browser backend/);
+});
+
+test('progress: a greeting renders nothing at all', () => {
+  const writes: string[] = [];
+  const renderer = new ProgressRenderer({ out: { write: (t) => writes.push(t) }, live: false });
+  renderer.event({ type: 'route', route: 'conversation' });
+  renderer.event({ type: 'done' });
+  renderer.end();
+  assert.equal(writes.join(''), '', 'no progress circus for a greeting');
+});
+
+test('progress: specialist agents get their own start line', () => {
+  const events: CoordinatorEvent[] = [
+    { type: 'route', route: 'complex' },
+    { type: 'planning' },
+    { type: 'step-start', step: 1, total: 2 },
+    { type: 'agent-start', role: 'thinker', label: 'Thinker' },
+    { type: 'agent-done', role: 'thinker', label: 'Thinker', status: 'completed', summary: 'Strategy ready' },
+    { type: 'step-start', step: 2, total: 2 },
+    { type: 'agent-start', role: 'editor', label: 'Grace' },
+    { type: 'working' },
+    { type: 'agent-done', role: 'editor', label: 'Grace', status: 'completed', summary: 'Implemented' },
+    { type: 'done' },
+  ];
+  const out = runThrough(events);
+  assert.match(out, /· Planning…/);
+  assert.match(out, /· Thinker…/);
+  assert.match(out, /→ Thinker ✓ — Strategy ready/);
+  assert.match(out, /→ Grace ✓ — Implemented/);
 });
 
 test('progress: verbose mode adds step headers', () => {
   const out = runThrough(scriptedRun(), { verbose: true });
-  assert.match(out, /Step 1\/4/);
-  assert.match(out, /Step 4\/4/);
-});
-
-test('progress: a step taller than the live limit settles to plain output', () => {
-  const writes: string[] = [];
-  const renderer = new ProgressRenderer({ out: { write: (t) => writes.push(t) }, live: true, columns: 60 });
-  const events: CoordinatorEvent[] = [
-    { type: 'planning' },
-    { type: 'step-start', step: 1, total: 1 },
-    // 14 parallel agents exceed MAX_LIVE_ROWS (12) → plain settle.
-    ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((i): CoordinatorEvent => ({
-      type: 'agent-start', role: 'file-picker', label: `Agent ${i}`,
-    })),
-    ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((i): CoordinatorEvent => ({
-      type: 'agent-done', role: 'file-picker', label: `Agent ${i}`, status: 'completed', summary: `done ${i}`,
-    })),
-    { type: 'done' },
-  ];
-  for (const e of events) renderer.event(e);
-  renderer.end();
-  const all = writes.join('');
-  // The tall step settled to plain running-state lines rather than redrawing.
-  assert.match(all, /Agent 0…/);
-  // Every agent is eventually settled with a completion mark.
-  assert.match(all, /Agent 13 ✓/);
-  assert.match(all, /Agent 0 ✓/);
-  // No plain-bullet pending line survives anywhere in the settled output.
-  assert.ok(!/· Agent/.test(all), 'no pending agent lines after settling');
+  assert.match(out, /Step 1\/1/);
 });
 
 test('progress: live mode settles every line by end() (no pending leftovers)', () => {
@@ -211,21 +207,21 @@ test('progress: live mode settles every line by end() (no pending leftovers)', (
   const all = writes.join('');
   // Live redraw used ANSI cursor control.
   assert.ok(all.includes('\x1b['), 'live redraw emits ANSI sequences');
-  // The final write is the settled block and contains every agent once.
+  // The final write is the settled block and contains the primary agent once.
   const last = writes[writes.length - 1] as string;
-  assert.match(last, /→ Project Scout ✓/);
-  assert.match(last, /└─ Code Reviewer ✓/);
+  assert.match(last, /→ Grace ✓ — Authentication added/);
   const plain = last.replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\[[0-9]+[AB]/g, '');
-  // The planning line legitimately stays; no AGENT line may remain pending.
-  assert.ok(!/· (Project Scout|File Picker|Editor|Test Runner|Code Reviewer)…/.test(plain), 'no pending agent lines remain after end()');
+  // No AGENT/working line may remain pending after end().
+  assert.ok(!/· Grace is working…/.test(plain), 'no pending working line after end()');
+  assert.ok(!/· (Thinker|Grace)…/.test(plain), 'no pending agent lines remain after end()');
 });
 
 test('progress: ASCII fallback keeps the same structure with safe glyphs', () => {
   withEnv({ ZEESH_ASCII: '1', ZEESH_UNICODE: undefined }, () => {
     const out = runThrough(scriptedRun());
-    assert.match(out, /-> Project Scout \[ok\]/);
-    assert.match(out, /\+\- Test Runner \[ok\]/);
-    assert.match(out, /\+\- Code Reviewer \[ok\]/);
+    assert.match(out, /-> Grace \[ok\] — Authentication added/);
+    // Settled bullets become '*' (the tool-status text itself keeps its unicode arrow).
+    assert.match(out, /\* → read_file src\/auth\/login\.ts/);
   });
 });
 
@@ -248,12 +244,14 @@ function fakeProvider(label = 'Groq'): AIProvider {
 function fakeResult(overrides: Partial<CoordinatorRunResult> = {}): CoordinatorRunResult {
   return {
     task: 'Add auth',
-    plan: { steps: [{ agents: ['file-picker'], reason: 'find files' }, { agents: ['editor'], reason: 'implement' }] },
+    route: 'coding',
+    plan: { steps: [{ agents: ['editor'], reason: 'Primary agent handles the task directly.' }] },
     results: [],
     finalAnswer: 'Implemented authentication.',
     changedFiles: [],
     iterations: 3,
     toolCalls: 5,
+    metrics: { llmCalls: 3 },
     ...overrides,
   };
 }
@@ -340,6 +338,7 @@ test('results: a secondary agent failing does not mislabel a completed task', ()
 test('results: verbose adds plan, agent details and usage sections', () => {
   const runtime = fakeRuntime('C:\\work\\app');
   const result = fakeResult({
+    plan: { steps: [{ agents: ['file-picker'], reason: 'find files' }, { agents: ['editor'], reason: 'implement' }] },
     results: [
       {
         agent: 'file-picker', label: 'File Picker', status: 'completed', summary: 'Found the files',

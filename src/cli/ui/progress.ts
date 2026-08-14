@@ -1,21 +1,22 @@
 /**
- * Agent progress rendering (GRACE UI).
+ * Grace progress rendering (GRACE UI — primary-agent UX).
  *
- * Turns coordinator events into concise, non-chain-of-thought progress lines:
+ * Turns coordinator events into concise, non-chain-of-thought progress:
  *
- *   · Planning…
- *   → Project Scout ✓ — mapped the repository
- *   → File Picker ✓ — 3 relevant files
- *   → Editor ✓ — implemented the change
- *   ┌─ Test Runner ✓ — 215/215 tests passed
- *   └─ Code Reviewer ✓ — no critical issues
+ *   Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
  *
- * - Agent lines only ever show: name, status mark, one-line summary.
- * - Agents that ran in parallel inside one coordinator step are drawn as a
- *   small tree (┌─ / └─); single-agent steps are flat → lines.
- * - In a real terminal the pending block is redrawn in place with a subtle
- *   rotating spinner; on plain/piped output the same final lines are printed
- *   deterministically (every line is settled before the run finishes).
+ *   · Grace is working…
+ *   • → read_file src/auth/login.ts
+ *   • → edit_file src/auth/login.ts
+ *   • → run_command npm test
+ *   → Grace ✓ — Authentication added
+ *
+ * - One line per meaningful event: the provider header, a live working line
+ *   (`· Grace is working…` / `· Thinker…`), settled status bullets and one
+ *   settled line per finished agent.
+ * - The working line is redrawn in place with a subtle spinner on TTY; on
+ *   plain/piped output every line is printed deterministically as it settles.
+ * - A greeting ("hi") renders nothing at all — the reply is printed directly.
  */
 import type { CoordinatorEvent } from '../../agents/types.ts';
 import type { SubagentResult } from '../../agents/types.ts';
@@ -30,15 +31,9 @@ export interface ProgressRendererOptions {
   verbose?: boolean;
   /** Terminal width used for wrap-aware redraw (default stdout.columns). */
   columns?: number;
-}
-
-type AgentStatus = SubagentResult['status'] | 'running';
-
-interface StepAgent {
-  label: string;
-  status: AgentStatus;
-  summary?: string;
-  error?: string;
+  /** Provider + model shown once, e.g. "Grace · NVIDIA NIM · qwen/…". */
+  providerLabel?: string;
+  model?: string;
 }
 
 const SPINNER_MS = 120;
@@ -49,6 +44,12 @@ function oneLiner(text: string): string {
   return flat.length > 90 ? `${flat.slice(0, 89)}…` : flat;
 }
 
+/** Status messages that carry no user value in the progress block. */
+function isNoise(message: string): boolean {
+  const m = message.trim();
+  return m === 'Thinking…' || m === 'Thinking...' || /^Done in \d+ iteration/.test(m) || /^    ⚙ /.test(m);
+}
+
 export class ProgressRenderer {
   private readonly out: (text: string) => void;
   /** Live redraw — may flip to false when the block settles to plain output. */
@@ -57,13 +58,17 @@ export class ProgressRenderer {
   private readonly columns: number;
   private readonly sym: Symbols;
   private readonly th: Theme;
+  private readonly providerLine?: string;
 
+  /** Conversation route: nothing is rendered (the reply prints directly). */
+  private suppressed = false;
+  private headerPrinted = false;
   private planning?: string;
   private stepHeader?: string;
-  /** Agents of the step currently executing (insertion order). */
-  private step = new Map<string, StepAgent>();
-  /** Lines of fully-settled steps (already printed when not live). */
-  private blocks: string[] = [];
+  /** The live working line (not yet settled). */
+  private current?: string;
+  /** Lines of fully-settled events (printed when not live). */
+  private settled: string[] = [];
   private paintedRows = 0;
   private spinnerTimer: ReturnType<typeof setInterval> | null = null;
   private frame = 0;
@@ -77,39 +82,52 @@ export class ProgressRenderer {
     this.columns = opts.columns ?? process.stdout.columns ?? 80;
     this.sym = symbols();
     this.th = theme();
+    this.providerLine =
+      opts.providerLabel && opts.model
+        ? `  ${this.th.dim(`Grace ${this.sym.bullet} ${opts.providerLabel} ${this.sym.bullet} ${opts.model}`)}`
+        : undefined;
   }
 
   /** Feed a coordinator event. */
   event(evt: CoordinatorEvent): void {
+    if (this.suppressed) return;
     switch (evt.type) {
+      case 'route':
+        if (evt.route === 'conversation') {
+          this.suppressed = true;
+        }
+        break;
       case 'planning':
         this.planning = `  ${this.th.dim(`${this.sym.bullet} Planning${this.sym.ellipsis}`)}`;
-        if (!this.live) this.out(`${this.planning}\n`);
+        if (!this.live) this.print(`${this.planning}\n`);
         else this.paint();
         break;
+      case 'working':
+        this.setCurrent(`  ${this.th.dim(`${this.sym.bullet} Grace is working${this.sym.ellipsis}`)}`);
+        break;
+      case 'status':
+        if (isNoise(evt.message)) break;
+        this.addSettled(`  ${this.sym.dot} ${evt.message}`);
+        break;
       case 'step-start':
-        this.flushStep();
+        this.flushCurrent();
         this.stepHeader = this.verbose ? `  ${this.th.dim(`Step ${evt.step}/${evt.total}`)}` : undefined;
-        if (this.stepHeader && !this.live) this.out(`${this.stepHeader}\n`);
+        if (this.stepHeader && !this.live) this.print(`${this.stepHeader}\n`);
         else this.paint();
         break;
       case 'agent-start':
-        this.step.set(evt.label, { label: evt.label, status: 'running' });
-        this.ensureSpinner();
-        this.paint();
+        // The primary agent (Grace) is covered by the 'working' line — only
+        // specialist agents get their own start line.
+        if (evt.role !== 'editor') {
+          this.setCurrent(`  ${this.th.dim(`${this.sym.bullet} ${evt.label}${this.sym.ellipsis}`)}`);
+        }
         break;
       case 'agent-done':
-        this.step.set(evt.label, {
-          label: evt.label,
-          status: evt.status,
-          summary: evt.summary,
-          error: evt.error,
-        });
-        if (this.allDone()) this.flushStep();
-        else this.paint();
+        this.setCurrent(undefined);
+        this.addSettled(`  ${this.sym.arrow} ${this.renderDone(evt)}`);
         break;
       case 'done':
-        this.flushStep();
+        this.flushCurrent();
         this.paint();
         break;
     }
@@ -117,73 +135,69 @@ export class ProgressRenderer {
 
   /** Finish the run: settle any leftovers and stop the spinner. */
   end(): void {
-    this.flushStep();
+    this.flushCurrent();
     this.stopSpinner();
     this.paint();
   }
 
-  private allDone(): boolean {
-    return this.step.size > 0 && [...this.step.values()].every((a) => a.status !== 'running');
+  private ensureHeader(): void {
+    if (this.headerPrinted) return;
+    this.headerPrinted = true;
+    if (this.providerLine) this.print(`${this.providerLine}\n`);
   }
 
-  /** Permanently record the current step's block (print when not live). */
-  private flushStep(): void {
-    if (this.step.size === 0) return;
-    const block = this.renderStep(this.step);
-    this.step = new Map();
+  private print(text: string): void {
+    this.ensureHeader();
+    this.out(text);
+  }
+
+  /** A line settles: printed immediately in plain mode, painted in live mode. */
+  private addSettled(line: string): void {
+    this.settled.push(line);
     this.stopSpinner();
-    this.blocks.push(...block);
+    if (!this.live) this.print(`${line}\n`);
+    else this.paint();
+  }
+
+  private setCurrent(line: string | undefined): void {
+    this.current = line;
+    if (line) this.ensureSpinner();
+    else this.stopSpinner();
     if (!this.live) {
-      for (const line of block) this.out(`${line}\n`);
+      if (line) this.print(`${line}\n`);
+    } else {
+      this.paint();
     }
-    this.paint();
   }
 
-  /** The full logical progress block (planning + header + settled + current). */
+  private flushCurrent(): void {
+    this.current = undefined;
+    this.stopSpinner();
+  }
+
+  /** The full logical progress block (header + planning + settled + current). */
   private renderAll(): string[] {
     const lines: string[] = [];
+    if (this.providerLine) lines.push(this.providerLine);
     if (this.planning) lines.push(this.planning);
     if (this.stepHeader) lines.push(this.stepHeader);
-    lines.push(...this.blocks);
-    if (this.step.size > 0) lines.push(...this.renderStep(this.step));
+    lines.push(...this.settled);
+    if (this.current) lines.push(this.current);
     return lines;
   }
 
-  /** Render one step: flat arrow line, or a parallel tree. */
-  private renderStep(step: Map<string, StepAgent>): string[] {
-    const agents = [...step.values()];
-    if (agents.length === 1) {
-      const a = agents[0] as StepAgent;
-      const line = a.status === 'running' ? this.renderRunning(a) : `  ${this.sym.arrow} ${this.renderDone(a)}`;
-      return [line];
-    }
-    return agents.map((a, i) => {
-      const branch =
-        i === 0 ? this.sym.cornerTl : i === agents.length - 1 ? this.sym.cornerBl : this.sym.mid;
-      const body = a.status === 'running' ? this.renderRunning(a) : this.renderDone(a);
-      return `  ${branch}${this.sym.hLine} ${body}`;
-    });
-  }
-
-  /** "· Label…" while an agent is still working. */
-  private renderRunning(a: StepAgent): string {
-    const { sym, th } = this;
-    const glyph = this.spinnerTimer ? sym.spinner[this.frame % sym.spinner.length] : sym.bullet;
-    return th.dim(`${glyph} ${a.label}${sym.ellipsis}`);
-  }
-
-  /** "Label ✓ — summary" (or ✗ / !) once the agent finished. */
-  private renderDone(a: StepAgent): string {
+  /** "Label ✓ — summary" (or ✗ / !) once an agent finished. */
+  private renderDone(evt: Extract<CoordinatorEvent, { type: 'agent-done' }>): string {
     const { sym, th } = this;
     const mark =
-      a.status === 'completed'
+      evt.status === 'completed'
         ? th.success(sym.check)
-        : a.status === 'failed'
+        : evt.status === 'failed'
           ? th.error(sym.cross)
           : th.warn(sym.warn);
-    const text = a.status === 'completed' ? a.summary : a.status === 'failed' ? (a.error ?? a.summary) : a.summary;
+    const text = evt.status === 'completed' ? evt.summary : evt.status === 'failed' ? (evt.error ?? evt.summary) : evt.summary;
     const detail = text ? ` ${th.dim(`— ${oneLiner(text)}`)}` : '';
-    return `${th.agent(a.label)} ${mark}${detail}`;
+    return `${th.agent(evt.label)} ${mark}${detail}`;
   }
 
   // -------------------------------------------------------------------------
@@ -221,12 +235,10 @@ export class ProgressRenderer {
     this.paintedRows = 0;
     this.stopSpinner();
     for (const line of lines) this.out(`${line}\n`);
-    // The current content is now on screen — clear the internal state so
-    // nothing is printed a second time.
     this.planning = undefined;
     this.stepHeader = undefined;
-    this.blocks = [];
-    this.step = new Map();
+    this.settled = [];
+    this.current = undefined;
   }
 
   private ensureSpinner(): void {
@@ -246,3 +258,5 @@ export class ProgressRenderer {
     }
   }
 }
+
+export type { SubagentResult };

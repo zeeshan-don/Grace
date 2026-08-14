@@ -21,6 +21,8 @@ export interface RunSubagentOptions {
   session: ConversationStore;
   undo: UndoStore;
   askPermission: (command: string, reasons: string[]) => Promise<boolean>;
+  /** Progress status lines (tool actions) forwarded to the CLI. */
+  onStatus?: (msg: string) => void;
 }
 
 /**
@@ -50,6 +52,7 @@ export async function runSubagent(
     askPermission: opts.askPermission,
     maxIterations: spec.maxIterations,
     contextBudget: spec.contextBudget,
+    onStatus: opts.onStatus,
   });
 
   const result = await loop.run(task);

@@ -4,13 +4,13 @@ import { extractLastJsonObject } from './structured.ts';
 import type { AgentPlan, AgentRole, Planner, PlannerInput, PlanStep } from './types.ts';
 
 /**
- * Task planning (GRACE coordinator).
+ * Task planning (GRACE primary-agent architecture).
  *
- * The planner decides WHICH agents run, in WHAT order, and WHAT can run in
- * parallel. The LLM planner is used when a provider is available; the
- * rule-based fallback (below) is deterministic, so the coordinator always
- * produces a valid plan even when the model is down or unparseable (e.g. the
- * scripted test backend).
+ * Planning is OPTIONAL and only engaged for complex tasks. The default plan
+ * for any coding/inspect task is a single primary-agent step — the coordinator
+ * never plans for simple work. When planning does run, the deterministic
+ * rule-based planner is primary (instant, zero model calls); the LLM planner
+ * is available for deeper strategy and falls back to the rules on any failure.
  */
 
 // ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ import type { AgentPlan, AgentRole, Planner, PlannerInput, PlanStep } from './ty
 // ---------------------------------------------------------------------------
 
 /**
- * Cap the plan size and enforce dependency invariants (editor runs alone).
+ * Cap the plan size and enforce dependency invariants (the editor runs alone).
  * Unknown roles are dropped; AVAILABLE-but-unsupported roles (e.g. browser-use
  * without a browser backend) are KEPT so the coordinator reports them as
  * unavailable instead of silently substituting another agent.
@@ -31,39 +31,34 @@ export function normalizePlan(plan: AgentPlan, knownRoles: AgentRole[]): AgentPl
     if (agents.length === 0) continue;
     const editorIndex = agents.indexOf('editor');
     if (editorIndex !== -1 && agents.length > 1) {
-      // The editor is the primary worker — never parallelized with others.
+      // The primary agent is the worker — never parallelized with others.
       steps.push({ agents: agents.filter((a) => a !== 'editor'), reason: step.reason });
-      steps.push({ agents: ['editor'], reason: 'Primary implementation agent.' });
+      steps.push({ agents: ['editor'], reason: 'Primary agent executes the plan.' });
     } else {
       steps.push({ agents, reason: step.reason });
     }
   }
-  return steps.length > 0 ? { steps, notes: plan.notes } : fallbackPlanInternal(knownRoles.length > 0 ? knownRoles : ['editor']);
+  return steps.length > 0 ? { steps, notes: plan.notes } : DEFAULT_PRIMARY_PLAN;
 }
 
-function fallbackPlanInternal(_knownRoles: AgentRole[]): AgentPlan {
-  return {
-    steps: [{ agents: ['editor'], reason: 'Fallback: single-agent run.' }],
-    notes: 'planner-fallback',
-  };
-}
+/** The default plan: ONE primary agent, nothing else. */
+export const DEFAULT_PRIMARY_PLAN: AgentPlan = {
+  steps: [{ agents: ['editor'], reason: 'Primary agent handles the task directly.' }],
+  notes: 'primary-agent',
+};
 
 // ---------------------------------------------------------------------------
-// Rule-based fallback planner
+// Rule-based planner (deterministic, zero model calls)
 // ---------------------------------------------------------------------------
 
-/** Deterministic classification used when the LLM planner is unavailable. */
+/**
+ * Deterministic plan used for complex tasks. Deliberately lean: exploration
+ * and review live INSIDE the primary agent's tool loop; only genuinely useful
+ * specialists appear (strategy for architecture work, git for git operations,
+ * browser for browser verification).
+ */
 export function ruleBasedPlanner(input: PlannerInput): AgentPlan {
   const t = input.task.trim();
-
-  if (/(website|web\s*page|web\s+app|browser|playwright|puppeteer|looks?\s+broken)/i.test(t)) {
-    return {
-      steps: [
-        { agents: ['project-scout'], reason: 'Understand the project.' },
-        { agents: ['browser-use'], reason: 'Verify rendering in the browser.' },
-      ],
-    };
-  }
 
   if (/^(git|commit|stage|stash|rebase|merge|branch|log)\b/i.test(t) || /^(what\s+changed|show\s+git)/i.test(t)) {
     return { steps: [{ agents: ['git-curator'], reason: 'Git operation.' }] };
@@ -77,50 +72,45 @@ export function ruleBasedPlanner(input: PlannerInput): AgentPlan {
     return {
       steps: [
         { agents: ['researcher'], reason: 'External research.' },
-        { agents: ['thinker'], reason: 'Synthesize the research into a strategy.' },
+        { agents: ['editor'], reason: 'Primary agent applies the findings.' },
       ],
     };
   }
 
-  const informational = /^(explain|what\s+is|what\s+are|where\s+is|where\s+are|how\s+does|how\s+is|why\s+is|why\s+does|summarize|show|describe|outline|find|list|which)\b/i.test(t);
-  if (informational) {
-    const fileish = /\/[^/\s]+$/.test(t) || (/\.[a-z0-9]{1,5}\b/i.test(t) && !/\s/.test(t));
+  if (/(website|web\s*page|web\s+app|browser|playwright|puppeteer|looks?\s+broken)/i.test(t)) {
+    return { steps: [{ agents: ['browser-use'], reason: 'Verify rendering in the browser.' }] };
+  }
+
+  // Complex/architectural work: an optional strategy specialist first, then
+  // the primary agent executes. No scouts, pickers or reviewers by default.
+  const complex = /complex|architecture|design|concurrency|performance|security|refactor|hard|difficult|trade-?offs/i.test(t);
+  if (complex) {
     return {
-      steps: fileish
-        ? [{ agents: ['file-picker'], reason: 'Read and explain the referenced file.' }]
-        : [
-            { agents: ['project-scout'], reason: 'Locate where the subject lives.' },
-            { agents: ['file-picker'], reason: 'Pick the relevant files.' },
-          ],
+      steps: [
+        { agents: ['thinker'], reason: 'Optional strategy specialist: design the implementation approach.' },
+        { agents: ['editor'], reason: 'Primary agent executes the plan.' },
+      ],
     };
   }
 
-  // Default: a coding/action task follows the full lifecycle.
-  const complex = /complex|architecture|design|concurrency|performance|security|refactor|hard|difficult|trade-?offs/i.test(t);
-  const steps: PlanStep[] = [
-    { agents: ['project-scout'], reason: 'Map the repository.' },
-    { agents: ['file-picker'], reason: 'Find the relevant files.' },
-  ];
-  if (complex) steps.push({ agents: ['thinker'], reason: 'Design the implementation strategy.' });
-  steps.push({ agents: ['editor'], reason: 'Implement the change.' });
-  steps.push({ agents: ['test-runner', 'code-reviewer'], reason: 'Verify and review in parallel.' });
-  return { steps };
+  // Everything else is handled directly by the primary agent.
+  return DEFAULT_PRIMARY_PLAN;
 }
 
 // ---------------------------------------------------------------------------
-// LLM planner
+// LLM planner (optional deep strategy; rule fallback on any failure)
 // ---------------------------------------------------------------------------
 
 const PLANNER_SYSTEM = [
-  'You are the GRACE coordinator planner. Decide which specialized agents should work on the task and in what order.',
+  'You are the GRACE planner for complex tasks. Decide which specialized agents should work on the task and in what order.',
   'Rules:',
-  '- Use as few agents as possible; simple tasks get one agent.',
-  '- Order is sequential: exploration (project-scout, file-picker, thinker, researcher) before the editor, editor before verification.',
-  '- Agents listed in the same step run in PARALLEL. Only independent agents may share a step.',
-  '- The editor must run alone in its own step. test-runner and code-reviewer may share the final step.',
+  '- Use as few agents as possible; the primary agent (editor) handles most of the work itself.',
+  '- The editor is the primary worker and must run alone in its own step.',
+  '- Optional specialists that may run BEFORE the editor when they add clear value: thinker (strategy), researcher (web research), project-scout (map the repo).',
+  '- Never include file-picker, code-reviewer or test-runner — the primary agent searches, reviews and validates itself.',
   '- Only use the listed available agents.',
   'Reply with ONLY a JSON object, no prose and no markdown fences:',
-  '{"steps":[{"agents":["file-picker"],"reason":"short justification"}],"notes":"optional one-liner"}',
+  '{"steps":[{"agents":["thinker"],"reason":"short justification"},{"agents":["editor"],"reason":"implement"}],"notes":"optional one-liner"}',
 ].join('\n');
 
 function buildPlannerPrompt(input: PlannerInput): string {

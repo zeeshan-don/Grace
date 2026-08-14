@@ -25,7 +25,7 @@ The agent inspects the repository, reads the relevant files, edits code, runs
 tests/builds, reads errors, attempts fixes, and iterates until the task is done
 or it needs your approval — then reports exactly what changed.
 
-**Status: Milestones 1–14 implemented** — a working local agent (M1–9: CLI,
+**Status: Milestones 1–15 implemented** — a working local agent (M1–9: CLI,
 Groq, agent loop, file tools, terminal execution, safety, git, provider
 abstraction), the cloud backend foundation (M10: Vercel-ready API, server-side
 provider keys, Neon schema + usage recording), real authentication
@@ -34,12 +34,13 @@ backend usage reporting), closed-beta readiness (M12: production-safe
 migrations + indexes, auth/error hardening, CORS + preflight, secret-safe
 request logging, closed-beta registration gate, Vercel config, deployment + beta
 checklist docs), the GRACE FREE daily session system (M13: 6 sessions/day ×
-60 minutes, enforced server-side in Neon with automatic session rollover) and
-the subagent coordinator (M14: 9 specialized agents + a central coordinator
-that plans, delegates with narrow context/permissions, runs independent agents
-in parallel and composes a concise answer — see
-[Subagent coordinator](#subagent-coordinator-milestone-14)). The
-CLI stays fully local and works offline; the backend is **not deployed yet** —
+60 minutes, enforced server-side in Neon with automatic session rollover), the
+subagent coordinator (M14: 9 specialized agents + a central coordinator that
+plans, delegates with narrow context/permissions and composes a concise answer)
+and the **primary-agent redesign** (M15: a fast local router, one primary
+agent by default, optional planning only for complex tasks, a calmer CLI and
+per-run instrumentation — see [Architecture](#primary-agent-architecture-milestone-15)).
+The CLI stays fully local and works offline; the backend is **not deployed yet** —
 deployment is documented and ready (`docs/deployment.md`).
 
 ---
@@ -256,76 +257,85 @@ Model Router
   (429 for rate limits, 504 for timeouts, 502 otherwise). API keys are never
   included in errors, logs or responses — `nvapi-…` values are additionally
   redacted by the log scrubber as defense in depth.
-- **Per-role routing (future)** — the `ModelRouter` maps `(role, tier) →
-  {provider, model}` (e.g. thinker → strongest reasoning model, file-picker
-  → fast model). Today every agent shares the runtime's provider/model — the
-  infrastructure is in place and no agent code needs to change.
+- **Primary agent routing** — the primary agent uses the user's configured
+  provider/model directly, so the CLI always shows one visible provider
+  (`Grace · NVIDIA · model`). Optional specialists and the complex-task
+  planning call resolve their own `(role, tier) → {provider, model}` route
+  through the `ModelRouter` (thinker → reasoning model, etc.). The
+  infrastructure is in place — no agent code needs to change to rewire it.
 
-### Subagent coordinator (Milestone 14)
+### Primary-agent architecture (Milestone 15)
 
-Every task now runs through a **central coordinator** that decomposes it into a
-small plan of specialized agents, instead of one unbounded loop. The design is
-inspired by the Freebuff subagent model (original implementation — no copied
-code, prompts or branding): specialized agents, narrow context, narrow
-permissions, coordinator-driven delegation, parallel execution where safe,
-provider/model abstraction, and verification after changes.
+GRACE is built around **one primary agent** that handles the task end to end:
+it understands the request, explores the repository, reads files, edits code,
+runs commands, fixes errors and iterates until the task is done. Planning and
+specialized subagents are **optional** — only engaged for complex tasks or
+when the user explicitly asks. This replaces the old default pipeline where
+every message spawned a planner + scouts + pickers + editor + reviewer + test
+runner (several LLM calls before any useful work).
 
 ```
-User task
+User request
    │
    ▼
-Coordinator (plans → delegates → composes)
-   │  narrow context · compact structured results
+Fast local router (deterministic — no model call)
+   │
+   ├─ conversation → local reply (0 LLM calls)
+   ├─ tests        → deterministic test runner (0 LLM calls)
+   │
+   └─ coding / inspect / complex
+        │
+        ▼
+   Primary Agent  ──►  tools: search → read → edit/write → run → fix → re-run
+        │
+        ▼
+   complex tasks only: optional planning (thinker strategy specialist)
+   │
    ▼
-Project Scout → File Picker → (Thinker) → Editor → Test Runner + Code Reviewer ⚡
-   read-only       read-only      read-only   full tools   run in parallel
+   composed answer · changed files · validation · stats
 ```
 
-The 9 specialized roles (all in `src/agents/`):
+- **Fast local router** (`src/agents/fastRouter.ts`) — deterministic
+  classification with zero model calls. `hi`/`thanks`/`what can you do?` are
+  answered locally (even without a provider); `run the tests` uses the
+  deterministic runner; `build authentication`/`refactor the architecture`
+  become eligible for planning; everything else starts the primary agent
+  immediately.
+- **Primary agent** — the editor role (`Grace`) with the full
+  read/write/execute toolset and the repository index in context. It selects
+  its own validation: test commands (`npm test`, `typecheck`, `build`, …)
+  run without interrupting the user, while dangerous commands still prompt.
+- **Optional planning** — complex tasks may run a planning phase (LLM on the
+  reasoning tier with a deterministic rule-based fallback) whose strategy
+  guides the primary agent. Optional specialists (thinker, researcher,
+  git-curator, browser-use) only run when a plan includes them; code review
+  stays off unless explicitly requested.
+- **Context management** — the primary agent gets only the compact repository
+  index + compacted prior results, never the whole repo; tool outputs are
+  truncated and old tool results fall out of the window.
+- **Provider routing** — the primary agent uses the user's configured
+  provider/model directly (`Grace · NVIDIA · qwen/…`); fallback is automatic
+  (server NVIDIA → Groq, client rate-limit retries). The `AIProvider`
+  abstraction plus the new **DeepSeek** provider
+  (`src/providers/deepseek.ts`, registered in `registry.ts`) make adding
+  providers a registry + env change — never an agent change.
+- **Instrumentation** — every run records LLM-call count, time to first
+  response, time to first tool call, and aggregates token usage from EVERY
+  internal model call (including the optional planning call) for server-side
+  reporting.
+- **CLI UX** — progress shows states, not a committee:
 
-| Role | Capabilities | Purpose |
-| ---- | ------------ | ------- |
-| Project Scout | read | structural map of the repository (maintained index) |
-| File Picker | read | find + rank the files relevant to the task |
-| Thinker | read | deep reasoning → concise implementation strategy |
-| Researcher | read + web | external docs/research with source URLs |
-| Code Reviewer | read + diff | review changes: bugs, regressions, security, missing tests |
-| Test Runner | read + execute | detect framework, run only relevant tests |
-| Shell Runner | read + execute | run commands under the permission policy |
-| Git Curator | read + diff + execute | inspect/stage/commit — never pushes without authorization |
-| Browser | browser | browser verification (reported unavailable unless a backend is installed) |
+  ```
+  Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
 
-Plus the **Editor** — the primary coding agent with the full read/write/execute
-toolset (the original AgentLoop). Key properties:
+  · Grace is working…
+  • → read_file src/auth/login.ts
+  • → edit_file src/auth/login.ts
+  • → run_command npm test
+  → Grace ✓ — Authentication added
+  ```
 
-- **Planner** — one small model call decides which agents are needed, in what
-  order, and which run in parallel (`src/agents/planner.ts`). A deterministic
-  rule-based fallback keeps the coordinator working even when the model is
-  unavailable. Simple tasks get as few agents as possible (e.g. "run the
-tests" → just the Test Runner).
-- **Permissions** — each agent is granted only its capability's tools
-  (`src/agents/capabilities.ts`): read-only roles physically cannot call
-  `write_file`/`run_command`. Command policies auto-approve test commands for
-  the Test Runner and always confirm staging/committing for the Git Curator.
-- **Context management** — each agent gets a role prompt, the task and only
-  compacted summaries of prior results (`src/agents/compact.ts`); raw tool
-  dumps and full conversations are never forwarded. The repository index
-  (`src/project/index.ts`) gives structural context without re-reading the
-  repo, and is invalidated when files change.
-- **Parallelism** — independent agents (e.g. Test Runner + Code Reviewer) run
-  concurrently; dependent steps run strictly in order. Bounded concurrency and
-  per-agent iteration/context budgets keep provider load low.
-- **Model routing** — all agents use the configured provider today, but every
-  spec carries a tier hint (`fast`/`default`/`strong`) resolved through
-  `src/agents/modelRouter.ts`, so per-role models can be wired later without
-  touching agent code.
-- **Failure recovery** — a failed agent never aborts the run; its error is
-  recorded and later steps still execute. The Browser agent reports
-  "unavailable" cleanly instead of silently doing nothing.
-- **CLI UX** — concise progress only (`· Planning… → Project Scout → … → Done`),
-  no chain-of-thought; the composed answer, changed files, stats and the
-  GRACE FREE quota line are printed when the run finishes. Interactive and
-  one-shot modes are unchanged.
+  Greetings render nothing and are answered instantly.
 
 See [docs/coordinator.md](docs/coordinator.md) for the full architecture.
 
@@ -507,8 +517,9 @@ npm run build        # emit dist/
 | 12 | Closed beta                   | ✅ (hardening, CORS, safe logging, closed-beta gate, Vercel config, deployment + beta checklist docs — deploy not yet performed) |
 | 13 | GRACE FREE daily sessions     | ✅ (6 sessions/day × 60 min, server-enforced in Neon, auto-rollover, CLI quota display, tests — no ads, no fake numbers) |
 | 14 | Subagent coordinator          | ✅ (9 specialized agents + central coordinator: planning, narrow context + permissions, parallel delegation, failure recovery, project index, CLI progress UX — tests + docs) |
-| 15 | Measure real AI cost/user     | ⏳ (economics docs + `models` pricing table ready — needs live data) |
-| 16 | Advertising (after economics) | ⏳                          |
+| 15 | Primary-agent redesign        | ✅ (fast local router, one primary agent by default, optional planning for complex tasks only, calmer state-based CLI progress, per-run instrumentation — LLM calls / time-to-first-tool, DeepSeek provider added, usage from every internal call aggregated — tests + docs) |
+| 16 | Measure real AI cost/user     | ⏳ (economics docs + `models` pricing table ready — needs live data) |
+| 17 | Advertising (after economics) | ⏳                          |
 
 ## Validation records
 

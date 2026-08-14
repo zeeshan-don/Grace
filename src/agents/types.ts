@@ -1,12 +1,16 @@
 /**
- * Subagent coordinator types (GRACE coordinator).
+ * Agent types (GRACE primary-agent architecture).
  *
- * The coordinator decomposes a user task into a small plan of specialized
- * agents. Each agent gets narrow context, a restricted tool set and explicit
- * permissions, then reports a compact structured result back to the
- * coordinator. This keeps every model call small and prevents the TPM/context
- * blowups of a single unbounded loop.
+ * The coordinator classifies each task with the fast local router, then by
+ * default runs ONE primary agent (the editor) with the full toolset. Planning
+ * and specialized subagents are optional — they are only engaged for complex
+ * tasks or when the user explicitly asks (e.g. a review).
  */
+
+import type { Usage } from '../providers/types.ts';
+
+/** Deterministic classification produced by the fast router (no LLM). */
+export type TaskRoute = 'conversation' | 'tests' | 'complex' | 'inspect' | 'coding';
 
 /** The specialized agent roles the coordinator can delegate to. */
 export type AgentRole =
@@ -37,7 +41,7 @@ export type ModelTier = 'fast' | 'coding' | 'reasoning' | 'review' | 'no_llm';
 
 export interface AgentSpec {
   role: AgentRole;
-  /** Human label for progress lines, e.g. "Project Scout". */
+  /** Human label for progress lines, e.g. "Grace". */
   label: string;
   /** One-line purpose used by the planner. */
   purpose: string;
@@ -69,7 +73,7 @@ export interface SubagentResult {
   error?: string;
   iterations: number;
   toolCalls: number;
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  usage?: Usage;
 }
 
 /** One plan step: agents that may run in parallel. */
@@ -93,15 +97,37 @@ export interface PlannerInput {
 
 export type Planner = (input: PlannerInput) => Promise<AgentPlan>;
 
+/**
+ * Coordinator progress events — never chain-of-thought. The CLI renders
+ * high-level state only: which route was chosen, concise progress bullets,
+ * and agent summaries.
+ */
 export type CoordinatorEvent =
+  | { type: 'route'; route: TaskRoute }
   | { type: 'planning' }
+  /** The primary agent is working (live spinner in TTY mode). */
+  | { type: 'working' }
+  /** A concise, settled progress bullet, e.g. "Exploring the project". */
+  | { type: 'status'; message: string }
   | { type: 'step-start'; step: number; total: number }
   | { type: 'agent-start'; role: AgentRole; label: string }
   | { type: 'agent-done'; role: AgentRole; label: string; status: SubagentResult['status']; summary: string; error?: string }
   | { type: 'done' };
 
+/** Performance instrumentation for one run (spec: measure + log). */
+export interface RunMetrics {
+  /** Total model requests across every agent + optional planning call. */
+  llmCalls: number;
+  /** Milliseconds until the first progress/tool signal from the primary agent. */
+  timeToFirstResponseMs?: number;
+  /** Milliseconds until the primary agent's first tool execution. */
+  timeToFirstToolCallMs?: number;
+}
+
 export interface CoordinatorRunResult {
   task: string;
+  /** How the fast router classified the task. */
+  route: TaskRoute;
   plan: AgentPlan;
   results: SubagentResult[];
   /** Composed final answer shown to the user. */
@@ -109,5 +135,6 @@ export interface CoordinatorRunResult {
   changedFiles: string[];
   iterations: number;
   toolCalls: number;
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  usage?: Usage;
+  metrics: RunMetrics;
 }

@@ -96,7 +96,8 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
   parts.push('');
 
   parts.push(section('Time'));
-  const timeValue = `${th.number(formatDuration(executionTimeMs))} · ${result.iterations} iteration(s) · ${result.toolCalls} tool call(s)`;
+  const llm = result.metrics ? ` · ${result.metrics.llmCalls} LLM call(s)` : '';
+  const timeValue = `${th.number(formatDuration(executionTimeMs))} · ${result.iterations} iteration(s) · ${result.toolCalls} tool call(s)${llm}`;
   parts.push(`  ${timeValue}`);
   parts.push('');
 
