@@ -23,6 +23,7 @@
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { describeRunErrorCategory, TASK_ERROR_LABELS } from '../../agent/errors.ts';
 import type { CoordinatorRunResult, SubagentResult } from '../../agents/types.ts';
 import { isGitRepo, statusShort } from '../../git/git.ts';
 import { RemoteProvider } from '../../providers/remote.ts';
@@ -56,13 +57,33 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
   const editor = [...result.results].reverse().find((r) => r.agent === 'editor');
   const completedAny = result.results.some((r) => r.status === 'completed');
   const failed = editor ? editor.status === 'failed' : !completedAny && result.results.some((r) => r.status === 'failed');
-  const header = failed
-    ? th.error(`${sym.cross} Task not completed`)
-    : th.bold(th.success(`${sym.check} Done`));
-  parts.push(header);
-  parts.push('');
-  parts.push(result.finalAnswer.trim());
-  parts.push('');
+  const failure = editor?.failure;
+
+  if (failed && failure) {
+    // A classified failure (invalid tool call, provider outage, …) reports its
+    // ACTUAL category — an internal parser problem is never blamed on the
+    // provider.
+    const label = TASK_ERROR_LABELS[failure.category] ?? 'Task failed';
+    parts.push(th.error(`${sym.cross} ${label}`));
+    parts.push('');
+    parts.push(describeRunErrorCategory(failure.category));
+    if (failure.message) parts.push(failure.message);
+    const providerLine = [failure.providerLabel, failure.modelId].filter(Boolean).join(' · ');
+    if (providerLine) {
+      parts.push('');
+      parts.push(section('Provider'));
+      parts.push(`  ${th.provider(providerLine)}`);
+    }
+    parts.push('');
+  } else {
+    const header = failed
+      ? th.error(`${sym.cross} Task not completed`)
+      : th.bold(th.success(`${sym.check} Done`));
+    parts.push(header);
+    parts.push('');
+    parts.push(result.finalAnswer.trim());
+    parts.push('');
+  }
 
   const files = classifyFileChanges(result.changedFiles, runtime.root);
   if (files.length > 0) {
@@ -84,10 +105,19 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
     parts.push('');
   }
 
-  // Compact single-line footer: duration + tool calls. Provider/model, plan
-  // details and token usage are debug output (/status shows them on demand).
+  // Compact single-line footer: duration + tool calls + LLM calls, plus a dim
+  // line for duplicates/failures/retries when they happened (concise task
+  // metrics — never chain-of-thought). Provider/model, plan details and token
+  // usage are debug output (/status shows them on demand).
   const toolWord = result.toolCalls === 1 ? 'tool call' : 'tool calls';
-  parts.push(`  ${th.dim(`${th.number(formatDuration(executionTimeMs))} · ${result.toolCalls} ${toolWord}`)}`);
+  const llmCalls = result.metrics.llmCalls;
+  const llmWord = llmCalls === 1 ? 'LLM call' : 'LLM calls';
+  parts.push(`  ${th.dim(`${th.number(formatDuration(executionTimeMs))} · ${result.toolCalls} ${toolWord} · ${llmCalls} ${llmWord}`)}`);
+  const extra: string[] = [];
+  if (result.metrics.duplicateToolCalls) extra.push(`${result.metrics.duplicateToolCalls} duplicate tool call(s)`);
+  if (result.metrics.failedToolCalls) extra.push(`${result.metrics.failedToolCalls} failed tool call(s)`);
+  if (result.metrics.retries) extra.push(`${result.metrics.retries} retr${result.metrics.retries === 1 ? 'y' : 'ies'}`);
+  if (extra.length > 0) parts.push(`  ${th.dim(extra.join(' · '))}`);
 
   if (verbose) {
     parts.push('');
@@ -99,9 +129,16 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
     parts.push('');
 
     parts.push(section('Time'));
-    const llm = result.metrics ? ` · ${result.metrics.llmCalls} LLM call(s)` : '';
-    const timeValue = `${th.number(formatDuration(executionTimeMs))} · ${result.iterations} iteration(s) · ${result.toolCalls} tool call(s)${llm}`;
+    const m = result.metrics;
+    const timeValue = `${th.number(formatDuration(executionTimeMs))} · ${result.iterations} iteration(s) · ${result.toolCalls} tool call(s) · ${m.llmCalls} LLM call(s)`;
     parts.push(`  ${timeValue}`);
+    const detail: string[] = [];
+    if (m.duplicateToolCalls) detail.push(`${m.duplicateToolCalls} duplicate tool call(s)`);
+    if (m.failedToolCalls) detail.push(`${m.failedToolCalls} failed tool call(s)`);
+    if (m.retries) detail.push(`${m.retries} retr${m.retries === 1 ? 'y' : 'ies'}`);
+    if (m.modelTimeMs !== undefined) detail.push(`model wait ${formatDuration(m.modelTimeMs)}`);
+    if (m.toolTimeMs !== undefined) detail.push(`tool exec ${formatDuration(m.toolTimeMs)}`);
+    if (detail.length > 0) parts.push(`  ${th.dim(detail.join(' · '))}`);
     parts.push('');
 
     const plan = renderPlan(result);

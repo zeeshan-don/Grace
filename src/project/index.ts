@@ -186,6 +186,7 @@ function buildIndex(root: string): ProjectIndex {
 
   const testFramework = detectTestFramework(pkg, info.testCommand);
   const dominantExt = [...fileExtCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+  const deps = detectDependencies(root, pkg);
 
   const summary = [
     `${info.type}${info.framework ? `/${info.framework}` : ''} project · pm: ${info.packageManager}${info.languages.length ? ` · languages: ${info.languages.join('+')}` : ''}${dominantExt ? ` · dominant: ${dominantExt}` : ''}`,
@@ -193,6 +194,7 @@ function buildIndex(root: string): ProjectIndex {
     `Entrypoints: ${entrypoints.slice(0, 5).join(', ') || '—'}`,
     `Files: ${files.length} · top-level: ${topLevel.slice(0, 12).join(', ')}`,
     `Key files: ${keyFiles.slice(0, 10).join(', ')}`,
+    deps.length > 0 ? `Deps: ${deps.slice(0, 14).join(', ')}` : '',
     importantSymbols.length > 0
       ? `Symbols: ${importantSymbols.slice(0, 6).map((s) => `${s.file} (${s.symbols.slice(0, 6).join(', ')})`).join('; ')}`
       : '',
@@ -217,6 +219,46 @@ function buildIndex(root: string): ProjectIndex {
     sourceDirs: [...sourceDirs],
     importantSymbols,
   };
+}
+
+/**
+ * Detect the project's declared dependencies so the model knows the framework
+ * up front (no "search for Flask / FastAPI" loops). Reads package.json,
+ * requirements.txt and pyproject.toml dependency declarations.
+ */
+function detectDependencies(root: string, pkg: Record<string, unknown> | null): string[] {
+  const out = new Set<string>();
+
+  if (pkg) {
+    for (const section of ['dependencies', 'devDependencies', 'peerDependencies']) {
+      const deps = pkg[section];
+      if (deps && typeof deps === 'object' && !Array.isArray(deps)) {
+        for (const name of Object.keys(deps as Record<string, unknown>)) out.add(name);
+      }
+    }
+  }
+
+  const req = tryRead(join(root, 'requirements.txt'));
+  if (req) {
+    for (const raw of req.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#') || line.startsWith('-') || line.startsWith('.')) continue;
+      out.add(line.split(/[=<>\[;\s]/)[0] ?? line);
+    }
+  }
+
+  const pyproject = tryRead(join(root, 'pyproject.toml'));
+  if (pyproject) {
+    for (const re of [/^dependencies\s*=\s*\[([\s\S]*?)\]/m, /^\[tool\.poetry\.dependencies\][\s\S]*?$/m]) {
+      const m = pyproject.match(re);
+      if (!m) continue;
+      const block = m[1] ?? m[0];
+      const quoted = block.matchAll(/(?:^|[,\n])\s*["']([A-Za-z0-9_.-]+)["']/g);
+      for (const q of quoted) out.add(q[1] as string);
+    }
+  }
+
+  return [...out].filter((d) => !d.includes(' ')).sort();
 }
 
 /** Maintained, fingerprint-cached repository index. */

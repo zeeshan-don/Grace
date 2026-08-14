@@ -5,6 +5,8 @@ import { truncateMiddle } from '../util/text.ts';
 import type { Tool, ToolContext } from './registry.ts';
 
 const DEFAULT_TIMEOUT_SEC = 120;
+/** Hard cap on a single command's runtime — a hung server must never stall the agent. */
+const MAX_TIMEOUT_SEC = 300;
 const MAX_OUTPUT_CHARS = 100_000;
 
 /**
@@ -108,9 +110,9 @@ export function createRunCommandTool(ctx: ToolContext & { commandPolicy?: Comman
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'Shell command.' },
+        command: { type: 'string', description: 'Shell command. Do not start long-running servers/processes; use a short, bounded check instead.' },
         cwd: { type: 'string', description: 'Workdir relative to root (default root).' },
-        timeoutSec: { type: 'number', description: 'Timeout in seconds.' },
+        timeoutSec: { type: 'number', description: 'Timeout in seconds (capped at 300). Default 120.' },
       },
       required: ['command'],
     },
@@ -120,7 +122,12 @@ export function createRunCommandTool(ctx: ToolContext & { commandPolicy?: Comman
 
       const cwdRaw = typeof args.cwd === 'string' && args.cwd ? args.cwd : '.';
       const cwd = resolveCwd(ctx.projectRoot, cwdRaw);
-      const timeoutSec = typeof args.timeoutSec === 'number' && args.timeoutSec > 0 ? args.timeoutSec : DEFAULT_TIMEOUT_SEC;
+      const requested =
+        typeof args.timeoutSec === 'number' && Number.isFinite(args.timeoutSec) && args.timeoutSec > 0
+          ? Math.floor(args.timeoutSec)
+          : DEFAULT_TIMEOUT_SEC;
+      // A long-running server command must never hang the agent for hours.
+      const timeoutSec = Math.min(requested, MAX_TIMEOUT_SEC);
 
       const assessment = assessCommand(command);
 

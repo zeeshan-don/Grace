@@ -1,4 +1,5 @@
 import { AgentLoop } from '../agent/loop.ts';
+import { formatRunError } from '../agent/errors.ts';
 import type { AIProvider } from '../providers/types.ts';
 import type { ProjectInfo } from '../project/detect.ts';
 import type { ConversationStore } from '../session/session.ts';
@@ -63,13 +64,13 @@ export async function runSubagent(
 
   const result = await loop.run(task);
 
-  const failed = result.finalText.startsWith(PROVIDER_FAILURE_MARKER);
+  // A classified loop failure (provider / parser / tool) supersedes the text
+  // marker — the UI reports the ACTUAL failure category.
+  const failed = Boolean(result.error) || result.finalText.startsWith(PROVIDER_FAILURE_MARKER);
   const parsed = spec.structured ? parseStructuredResult(result.finalText) : null;
 
   const files = dedupe([...(parsed?.files ?? []), ...result.changedFiles]);
-  const summary = failed
-    ? result.finalText
-    : (parsed?.summary?.trim() || result.finalText || '(no response)');
+  const summary = failed ? result.finalText : parsed?.summary?.trim() || result.finalText || '(no response)';
 
   return {
     agent: spec.role,
@@ -80,7 +81,17 @@ export async function runSubagent(
     changedFiles: result.changedFiles,
     findings: parsed?.findings ?? [],
     recommendations: parsed?.recommendations ?? [],
-    error: failed ? summary : undefined,
+    error: failed ? (result.error ? formatRunError(result.error) : summary) : undefined,
+    failure: result.error,
+    metrics: {
+      llmCalls: result.iterations,
+      durationMs: result.durationMs,
+      duplicateToolCalls: result.duplicateToolCalls,
+      failedToolCalls: result.failedToolCalls,
+      retries: result.retries,
+      modelTimeMs: result.modelTimeMs,
+      toolTimeMs: result.toolTimeMs,
+    },
     iterations: result.iterations,
     toolCalls: result.toolCalls,
     usage: result.usage,

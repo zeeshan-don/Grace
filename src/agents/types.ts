@@ -8,6 +8,7 @@
  */
 
 import type { Usage } from '../providers/types.ts';
+import type { TaskRunError } from '../agent/errors.ts';
 
 /** Deterministic classification produced by the fast router (no LLM). */
 export type TaskRoute = 'conversation' | 'tests' | 'complex' | 'inspect' | 'coding';
@@ -71,6 +72,10 @@ export interface SubagentResult {
   findings: string[];
   recommendations: string[];
   error?: string;
+  /** Classified failure (provider vs parser vs tool) when the run failed. */
+  failure?: TaskRunError;
+  /** This agent's loop instrumentation (merged into the run's RunMetrics). */
+  metrics?: RunMetrics;
   iterations: number;
   toolCalls: number;
   usage?: Usage;
@@ -134,7 +139,14 @@ export type CoordinatorEvent =
   | { type: 'done' }
   | ToolEvent;
 
-/** Performance instrumentation for one run (spec: measure + log). */
+/**
+ * Performance instrumentation for one run (spec: measure + log).
+ *
+ * The per-agent loop fields (duplicateToolCalls, failedToolCalls, retries,
+ * modelTimeMs, toolTimeMs) are aggregated across every agent that ran;
+ * durationMs is the coordinator-level wall clock. Internal chain-of-thought
+ * is never exposed — these are only counts and timings.
+ */
 export interface RunMetrics {
   /** Total model requests across every agent + optional planning call. */
   llmCalls: number;
@@ -142,6 +154,18 @@ export interface RunMetrics {
   timeToFirstResponseMs?: number;
   /** Milliseconds until the primary agent's first tool execution. */
   timeToFirstToolCallMs?: number;
+  /** Total wall-clock task duration (ms). */
+  durationMs?: number;
+  /** Tool calls served from the dedup cache (repeated identical calls). */
+  duplicateToolCalls?: number;
+  /** Tool calls that failed (invalid args, unknown tool, execution error). */
+  failedToolCalls?: number;
+  /** Model request retries (rate-limit backoff). */
+  retries?: number;
+  /** Time spent waiting on model requests (ms). */
+  modelTimeMs?: number;
+  /** Time spent executing tools (ms). */
+  toolTimeMs?: number;
 }
 
 export interface CoordinatorRunResult {

@@ -41,10 +41,34 @@ test('allows safe commands', () => {
     'ls -la',
     'cat package.json',
     'echo hello',
+    'npm install', // installing the project's EXISTING deps is not a change
   ];
   for (const cmd of safe) {
     const a = assessCommand(cmd);
     assert.equal(a.level, 'safe', `expected "${cmd}" to be safe, got: ${a.reasons.join('; ')}`);
+  }
+});
+
+test('flags dependency installation (agent must not add frameworks it cannot find)', () => {
+  const flagged = [
+    'pip install flask',
+    'pip3 install fastapi',
+    'python -m pip install flask',
+    'python3 -m pip install -r requirements.txt',
+    'uv pip install flask',
+    'poetry add fastapi',
+    'npm install axios',
+    'npm i react',
+    'pnpm add lodash',
+    'yarn add express',
+    'bun add zod',
+    'cargo add serde',
+    'gem install rails',
+  ];
+  for (const cmd of flagged) {
+    const a = assessCommand(cmd);
+    assert.equal(a.level, 'flagged', `expected "${cmd}" to be flagged, got: ${a.reasons.join('; ')}`);
+    assert.ok(a.reasons.some((r) => /dependenc/i.test(r)), `reason mentions dependencies for "${cmd}"`);
   }
 });
 

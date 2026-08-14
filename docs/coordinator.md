@@ -137,7 +137,10 @@ Simple tasks never plan: `"fix the login bug"` → `[editor]` (one agent),
     `clean` always require user approval.
 
 The existing danger policy (`src/safety/policy.ts`) still applies to every
-agent's `run_command`.
+agent's `run_command`, and now also flags **dependency installation**
+(`pip install`, `npm install <pkg>`, `poetry add`, `cargo add`, …) so the agent
+must ask before adding a framework it cannot find. `run_command` also caps its
+runtime at 300s — a long-running server command can never hang the agent.
 
 ## Context management
 
@@ -152,6 +155,15 @@ agent's `run_command`.
   `MemorySession` — never written to `.zeesh/session.json`.
 - `src/agent/context.ts` trims the conversation window and truncates oversized
   tool results so the working context stays compact.
+- `src/agent/toolCache.ts` dedupes repeated `read_file` / `list_directory` /
+  `search_files` calls within a run: reads re-validate against mtime+size,
+  listings against the mutation epoch + dir mtime, and any write/edit/run
+  command invalidates the search cache — repeated identical calls never
+  re-scan the repo, but an edited file is never served stale.
+- The editor prompt (and the repository index summary) tell the agent to
+  identify the application (entry points, framework, dependency files, test
+  setup) from the Index BEFORE editing anything, and never to assume a file
+  is the app entry point because of its name.
 
 ## Project index
 
@@ -209,9 +221,14 @@ committee:
 
 Every run records (in `CoordinatorRunResult.metrics`): total **LLM calls**
 (across the primary agent, optional specialists AND the optional planning
-call), time to first response, and time to first tool call. The CLI prints the
-LLM-call count in debug mode (`/debug`); the run's token usage aggregates every
-internal model call and is reported server-side (`/api/usage`) when logged in.
+call), wall-clock **duration**, **tool calls**, **duplicate tool calls**
+(served from the dedup cache), **failed tool calls**, model **retries**, and
+**model wait / tool exec** time. The CLI prints a concise metrics footer after
+each task (`1m 52s · 8 tool calls · 11 LLM calls`, plus a dim line for
+duplicates/failures/retries when present) and the full breakdown in verbose
+mode. The run's token usage aggregates every internal model call and is
+reported server-side (`/api/usage`) when logged in. Internal chain-of-thought
+is never exposed.
 
 ## Failure modes
 
@@ -219,11 +236,31 @@ internal model call and is reported server-side (`/api/usage`) when logged in.
 | ------- | -------- |
 | greeting / tests | handled locally — no provider involved |
 | complex planner model call fails | rule-based fallback plan |
-| an agent's provider call fails | agent marked `failed`, run continues |
+| an agent's provider call fails | agent marked `failed` with a classified category |
 | an agent crashes unexpectedly | caught per agent, marked `failed`, run continues |
 | read-only role granted mutating tools | coordinator refuses (defense in depth) |
 | browser-use planned but no backend | agent reported `unavailable` with reason |
 | coordinator throws unexpectedly | the REPL reports the error and returns to the prompt |
+
+## Classified run errors (agent loop)
+
+`src/agent/errors.ts` classifies every loop failure so the UI reports the
+ACTUAL failure instead of blaming the provider:
+
+- `provider_unavailable` / `provider_timeout` / `provider_authentication` —
+  real provider problems (the message keeps the "I could not reach the AI
+  provider" prefix).
+- `invalid_tool_call` — tool-call arguments could not be parsed as JSON.
+  `src/agent/toolCall.ts` validates arguments before execution, applies only
+  conservative repairs (code fences / a single complete JSON object), and
+  sanitizes assistant messages so malformed arguments never reach the
+  provider's wire format. When the provider itself rejects a streamed tool
+  call (Groq: "Failed to parse tool call arguments as JSON"), the loop
+  retries via the provider's structured non-streaming path and classifies a
+  persistent failure as `invalid_tool_call` — never "provider unreachable".
+  Two consecutive turns where no tool executed also fail fast with this
+  category instead of thrashing to the iteration cap.
+- `tool_execution` / `task_cancelled` — tool crashes and Ctrl+C.
 
 ## Tests
 

@@ -47,6 +47,18 @@ export const DANGEROUS_PATTERNS: DangerPattern[] = [
   { re: /\bhelm\s+.*\b(delete|upgrade|install)\b/i, reason: 'helm mutate (infra)' },
   { re: /\b(systemctl|service)\s+\S+\s+(stop|kill|reset-failed)\b/i, reason: 'stops a system service' },
   { re: /\b(dropdb|createdb)\b/i, reason: 'database create/drop' },
+  // Dependency installation is a project mutation: the agent must never install
+  // a framework merely because it cannot find one. These commands require
+  // explicit user approval (the permission prompt).
+  { re: /(^|\s)(pip|pip3|pipx)\s+install\b/i, reason: 'installs a Python package (dependency change)' },
+  { re: /python(\d+(\.\d+)?)?\s+(-m\s+)?pip\s+install\b/i, reason: 'installs a Python package (dependency change)' },
+  { re: /\buv\s+pip\s+install\b/i, reason: 'installs a Python package (dependency change)' },
+  { re: /\bpoetry\s+add\b/i, reason: 'adds a Python dependency' },
+  { re: /\b(cargo|gem)\s+(add|install)\b/i, reason: 'adds/installs a dependency' },
+  // `npm install` without a package argument installs the project's existing
+  // dependencies (usually fine); installing/adding a SPECIFIC package is a
+  // dependency change and must be approved.
+  { re: /\b(npm|pnpm|yarn|bun)\s+(i|install|add)\s+\S+/i, reason: 'installs a package (dependency change)' },
 ];
 
 /** Filenames / path fragments that file tools must never touch. */

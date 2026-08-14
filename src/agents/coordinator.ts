@@ -237,7 +237,7 @@ export class Coordinator {
       iterations: acc.iterations,
       toolCalls: acc.toolCalls,
       usage: acc.totalTokens > 0 ? { inputTokens: acc.inputTokens, outputTokens: acc.outputTokens, totalTokens: acc.totalTokens } : undefined,
-      metrics: this.buildMetrics(clock, acc, plannerCalls),
+      metrics: this.buildMetrics(clock, acc, results, plannerCalls),
     };
   }
 
@@ -504,9 +504,17 @@ export class Coordinator {
     }
   };
 
-  /** Build the run's instrumentation record. */
-  private buildMetrics(clock: RunClock, acc: Accumulator, plannerCalls: number): RunMetrics {
-    const metrics: RunMetrics = { llmCalls: plannerCalls + acc.iterations };
+  /** Build the run's instrumentation record (aggregates every agent's loop metrics). */
+  private buildMetrics(clock: RunClock, acc: Accumulator, results: SubagentResult[], plannerCalls: number): RunMetrics {
+    const metrics: RunMetrics = {
+      llmCalls: plannerCalls + acc.iterations,
+      durationMs: Date.now() - clock.startedAt,
+      duplicateToolCalls: results.reduce((n, r) => n + (r.metrics?.duplicateToolCalls ?? 0), 0),
+      failedToolCalls: results.reduce((n, r) => n + (r.metrics?.failedToolCalls ?? 0), 0),
+      retries: results.reduce((n, r) => n + (r.metrics?.retries ?? 0), 0),
+      modelTimeMs: results.reduce((n, r) => n + (r.metrics?.modelTimeMs ?? 0), 0),
+      toolTimeMs: results.reduce((n, r) => n + (r.metrics?.toolTimeMs ?? 0), 0),
+    };
     if (clock.firstStatusAt !== undefined) metrics.timeToFirstResponseMs = clock.firstStatusAt - clock.startedAt;
     if (clock.firstToolAt !== undefined) metrics.timeToFirstToolCallMs = clock.firstToolAt - clock.startedAt;
     return metrics;

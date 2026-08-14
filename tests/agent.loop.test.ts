@@ -235,3 +235,269 @@ test('agent loop stops at the iteration limit', async () => {
   assert.equal(result.reachedLimit, true);
   assert.ok(result.finalText.includes('iteration limit'));
 });
+
+// ---------------------------------------------------------------------------
+// Tool-call JSON validation (Problem 1) + failure classification (Problem 6)
+// ---------------------------------------------------------------------------
+
+test('agent loop handles malformed tool-call arguments safely and never blames the provider', async () => {
+  const root = tempProject();
+  writeFileSync(join(root, 'a.txt'), 'hello');
+  const script: ScriptedTurn[] = [
+    { content: null, toolCalls: [{ id: 'c1', name: 'read_file', arguments: '{ bad json' }] },
+    { content: 'Understood — I will fix the arguments next time.', toolCalls: [] },
+  ];
+  const { project, session, undo, tools } = setup(root);
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('do the thing');
+
+  // The task recovered and finished — it was NOT reported as a provider failure.
+  assert.equal(result.finalText, 'Understood — I will fix the arguments next time.');
+  assert.ok(!result.finalText.includes('I could not reach the AI provider'), 'parser failure is not a provider failure');
+  assert.equal(result.error, undefined);
+  assert.equal(result.failedToolCalls, 1);
+
+  // The model received a tool error explaining the malformed arguments.
+  assert.ok(
+    session.toolHistory.some((h) => h.includes('invalid JSON arguments')),
+    'the malformed call is recorded with a diagnostic',
+  );
+
+  // The assistant message pushed to the session must NOT carry malformed JSON
+  // to the provider (the original 400 "Failed to parse tool call arguments").
+  const assistant = session.messages.find((m) => m.role === 'assistant' && m.tool_calls);
+  assert.equal(assistant?.tool_calls?.[0]?.arguments, '{}', 'wire arguments are sanitized');
+});
+
+test('agent loop fails with InvalidToolCall after repeated unparseable tool calls (no infinite thrash)', async () => {
+  const root = tempProject();
+  const script: ScriptedTurn[] = [
+    { content: null, toolCalls: [{ id: 'c1', name: 'read_file', arguments: '{ broken' }] },
+    { content: null, toolCalls: [{ id: 'c2', name: 'read_file', arguments: '{ broken' }] },
+  ];
+  const { project, session, undo, tools } = setup(root);
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('read the file');
+
+  assert.equal(result.error?.category, 'invalid_tool_call');
+  assert.equal(result.error?.providerLabel, 'Fake (test)');
+  assert.ok(result.finalText.includes('could not be executed safely'));
+  assert.equal(result.reachedLimit, false, 'fails fast — not by hitting the iteration cap');
+});
+
+test('agent loop recovers when the provider rejects malformed tool-call arguments', async () => {
+  const root = tempProject();
+  // The provider itself rejects the model's malformed streamed tool call (the
+  // original Groq "Failed to parse tool call arguments as JSON" 400). The loop
+  // must not call it a provider outage: it retries and the task continues.
+  const script: ScriptedTurn[] = [
+    { error: 'Failed to parse tool call arguments as JSON' },
+    { error: 'Failed to parse tool call arguments as JSON' },
+    { content: 'Recovered after the malformed tool call.', toolCalls: [] },
+  ];
+  const { project, session, undo, tools } = setup(root);
+  const provider = new FakeProvider(script);
+  const loop = new AgentLoop({
+    provider,
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('do the thing');
+
+  assert.equal(provider.callCount, 3, 'two failed streams + one successful recovery');
+  assert.equal(result.finalText, 'Recovered after the malformed tool call.');
+  assert.equal(result.error, undefined, 'a recoverable malformed call is not a failure');
+  assert.ok(!result.finalText.includes('I could not reach the AI provider'));
+});
+
+test('agent loop classifies a persistent provider-rejected tool call as InvalidToolCall, not provider outage', async () => {
+  const root = tempProject();
+  const script: ScriptedTurn[] = Array.from({ length: 5 }, () => ({ error: 'Failed to parse tool call arguments as JSON' }));
+  const { project, session, undo, tools } = setup(root);
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('do the thing');
+
+  assert.equal(result.error?.category, 'invalid_tool_call', 'a malformed tool call is not a provider outage');
+  assert.ok(!result.finalText.includes('I could not reach the AI provider'), 'parser failure is not blamed on the provider');
+  assert.ok(result.finalText.includes('could not be completed'));
+});
+
+test('agent loop classifies provider failures (timeout / auth / unavailable)', async () => {
+  const root = tempProject();
+
+  const runWithError = async (error: string): Promise<Awaited<ReturnType<AgentLoop['run']>>> => {
+    const { project, session, undo, tools } = setup(root);
+    const loop = new AgentLoop({
+      provider: new FakeProvider([{ error }]),
+      tools,
+      projectRoot: root,
+      project,
+      session,
+      undo,
+      askPermission: async () => false,
+    });
+    return loop.run('hi');
+  };
+
+  const timeout = await runWithError('ETIMEDOUT after 30s');
+  assert.equal(timeout.error?.category, 'provider_timeout');
+  assert.ok(timeout.finalText.startsWith('I could not reach the AI provider'));
+
+  const auth = await runWithError('401 Unauthorized: invalid api key');
+  assert.equal(auth.error?.category, 'provider_authentication');
+
+  const generic = await runWithError('server boom');
+  assert.equal(generic.error?.category, 'provider_unavailable');
+});
+
+// ---------------------------------------------------------------------------
+// Tool dedup cache (Problem 2)
+// ---------------------------------------------------------------------------
+
+test('agent loop dedupes repeated identical reads and refreshes after an edit', async () => {
+  const root = tempProject();
+  writeFileSync(join(root, 'a.txt'), 'v1');
+  const script: ScriptedTurn[] = [
+    { content: null, toolCalls: [{ id: 'c1', name: 'read_file', arguments: JSON.stringify({ path: 'a.txt' }) }] },
+    { content: null, toolCalls: [{ id: 'c2', name: 'read_file', arguments: JSON.stringify({ path: 'a.txt' }) }] },
+    {
+      content: null,
+      toolCalls: [{ id: 'c3', name: 'edit_file', arguments: JSON.stringify({ path: 'a.txt', edits: [{ oldString: 'v1', newString: 'v2' }] }) }],
+    },
+    { content: null, toolCalls: [{ id: 'c4', name: 'read_file', arguments: JSON.stringify({ path: 'a.txt' }) }] },
+    { content: 'done', toolCalls: [] },
+  ];
+  const { project, session, undo, tools } = setup(root);
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('inspect the file');
+
+  assert.equal(result.toolCalls, 4, 'all four calls were made');
+  assert.equal(result.duplicateToolCalls, 1, 'the second identical read was served from cache');
+  assert.ok(readFileSync(join(root, 'a.txt'), 'utf8').includes('v2'), 'the edit landed');
+  assert.ok(result.finalText === 'done');
+});
+
+test('agent loop never caches failed tool results', async () => {
+  const root = tempProject();
+  // The file does not exist → the first read errors; a repeated read must
+  // execute again (no stale error replay), so duplicateToolCalls stays 0.
+  const script: ScriptedTurn[] = [
+    { content: null, toolCalls: [{ id: 'c1', name: 'read_file', arguments: JSON.stringify({ path: 'nope.txt' }) }] },
+    { content: null, toolCalls: [{ id: 'c2', name: 'read_file', arguments: JSON.stringify({ path: 'nope.txt' }) }] },
+    { content: 'no file', toolCalls: [] },
+  ];
+  const { project, session, undo, tools } = setup(root);
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => false,
+  });
+  const result = await loop.run('read it');
+  assert.equal(result.duplicateToolCalls, 0, 'error results are never cached');
+  assert.equal(result.toolCalls, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Dependency installation gating (Problem 4)
+// ---------------------------------------------------------------------------
+
+test('run_command kills a long-running command instead of hanging the agent', async () => {
+  const root = tempProject();
+  const { project, session, undo, tools } = setup(root, async () => true);
+  // A server-style command that would never return on its own.
+  const script: ScriptedTurn[] = [
+    {
+      content: null,
+      toolCalls: [
+        {
+          id: 'c1',
+          name: 'run_command',
+          arguments: JSON.stringify({ command: 'node -e "setTimeout(() => {}, 100000)"', timeoutSec: 1 }),
+        },
+      ],
+    },
+    { content: 'The command timed out; I will avoid starting long-running processes.', toolCalls: [] },
+  ];
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async () => true,
+  });
+  const result = await loop.run('start a server');
+  assert.ok(result.finalText.includes('long-running'), 'the model reacted to the timeout');
+  // The tool result told the model the command was killed.
+  assert.ok(session.toolHistory.some((h) => h.includes('run_command')), 'command was recorded');
+});
+
+test('run_command requires approval for dependency installation (pip install)', async () => {
+  const root = tempProject();
+  const denied: string[] = [];
+  const { project, session, undo, tools } = setup(root, async (cmd) => {
+    denied.push(cmd);
+    return false;
+  });
+  const script: ScriptedTurn[] = [
+    { content: null, toolCalls: [{ id: 'c1', name: 'run_command', arguments: JSON.stringify({ command: 'pip install flask' }) }] },
+    { content: 'OK, I will not install anything.', toolCalls: [] },
+  ];
+  const loop = new AgentLoop({
+    provider: new FakeProvider(script),
+    tools,
+    projectRoot: root,
+    project,
+    session,
+    undo,
+    askPermission: async (cmd) => {
+      denied.push(cmd);
+      return false;
+    },
+  });
+  const result = await loop.run('install flask');
+  assert.equal(denied.length, 1, 'the permission prompt was shown');
+  assert.ok(denied[0]?.includes('pip install'));
+  assert.ok(result.finalText.includes('will not install'));
+});
