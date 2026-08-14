@@ -5,6 +5,7 @@ import type { ConversationStore } from '../session/session.ts';
 import type { UndoStore } from '../session/undo.ts';
 import type { Tool } from '../tools/registry.ts';
 import { truncateMiddle } from '../util/text.ts';
+import type { ToolEvent } from '../agents/types.ts';
 import { buildSystemPrompt, projectBits, DEFAULT_CONTEXT_BUDGET, trimMessages } from './context.ts';
 
 export interface AgentRunContext {
@@ -19,6 +20,12 @@ export interface AgentRunContext {
   systemPrompt?: string;
   /** Called with status lines (dim, prefixed). */
   onStatus?: (msg: string) => void;
+  /**
+   * Called with structured tool-level events (tool-start/end, file-changed,
+   * permission-request/result). The UI renders these as human-friendly
+   * activity instead of raw JSON.
+   */
+  onToolEvent?: (event: ToolEvent) => void;
   /** Called with streamed assistant text so the CLI can print it live. */
   onStream?: (text: string) => void;
   /** Overridable permission handler (REPL prompt, --yes, or test stub). */
@@ -224,7 +231,7 @@ export class AgentLoop {
   }
 
   private async executeTool(call: ToolCallParam, messages: ChatMessage[]): Promise<void> {
-    const { onStatus, session } = this.ctx;
+    const { onStatus, onToolEvent, session } = this.ctx;
     const tool = this.toolsByName.get(call.name);
 
     let args: Record<string, unknown>;
@@ -248,18 +255,24 @@ export class AgentLoop {
     onStatus?.(`→ ${call.name} ${brief}`);
     session.recordToolCall(`${call.name} ${brief}`);
 
+    onToolEvent?.({ type: 'tool-start', tool: call.name, args });
     try {
       const result = await tool.execute(args, {
         projectRoot: this.ctx.projectRoot,
         askPermission: async (cmd, reasons) => {
           onStatus?.(`⚠ "${cmd}" flagged (${reasons.join('; ')}) — asking user…`);
-          if (this.ctx.askPermission) return this.ctx.askPermission(cmd, reasons);
-          return false;
+          onToolEvent?.({ type: 'permission-request', command: cmd, reasons });
+          let allowed = false;
+          if (this.ctx.askPermission) allowed = await this.ctx.askPermission(cmd, reasons);
+          onToolEvent?.({ type: 'permission-result', command: cmd, allowed });
+          return allowed;
         },
         onTool: (n, a) => onStatus?.(`    ⚙ ${n} ${JSON.stringify(a).slice(0, 100)}`),
       });
+      onToolEvent?.({ type: 'tool-end', tool: call.name, ok: true });
       messages.push({ role: 'tool', tool_call_id: call.id, content: truncateMiddle(result, 20_000) });
     } catch (err) {
+      onToolEvent?.({ type: 'tool-end', tool: call.name, ok: false });
       const msg = `Error executing ${call.name}: ${(err as Error).message}`;
       messages.push({ role: 'tool', tool_call_id: call.id, content: msg });
     }
@@ -269,7 +282,10 @@ export class AgentLoop {
     if (call.name !== 'write_file' && call.name !== 'edit_file') return;
     try {
       const args = JSON.parse(call.arguments) as { path?: string };
-      if (args.path) changed.add(args.path);
+      if (args.path) {
+        changed.add(args.path);
+        this.ctx.onToolEvent?.({ type: 'file-changed', path: args.path });
+      }
     } catch {
       /* ignore */
     }

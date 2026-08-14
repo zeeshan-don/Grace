@@ -98,9 +98,28 @@ export interface PlannerInput {
 export type Planner = (input: PlannerInput) => Promise<AgentPlan>;
 
 /**
+ * Structured tool-level activity events (emitted by the agent loop, surfaced
+ * through the coordinator). These give the UI real, human-friendly tool
+ * activity without exposing arguments that are secret-shaped or raw JSON
+ * dumps — the UI renders summaries, never chain-of-thought.
+ */
+export type ToolEvent =
+  /** A tool started executing. `args` is the parsed argument object. */
+  | { type: 'tool-start'; tool: string; args: Record<string, unknown> }
+  /** A tool finished (ok = no thrown error; the tool reports failures in text). */
+  | { type: 'tool-end'; tool: string; ok: boolean }
+  /** A file was written or edited by a write/edit tool. */
+  | { type: 'file-changed'; path: string }
+  /** The agent asked the user to approve a flagged command. */
+  | { type: 'permission-request'; command: string; reasons: string[] }
+  /** The user answered a permission request. */
+  | { type: 'permission-result'; command: string; allowed: boolean };
+
+/**
  * Coordinator progress events — never chain-of-thought. The CLI renders
  * high-level state only: which route was chosen, concise progress bullets,
- * and agent summaries.
+ * and agent summaries. Tool-level activity arrives through the ToolEvent
+ * variants (tool-start/tool-end/file-changed/permission-*).
  */
 export type CoordinatorEvent =
   | { type: 'route'; route: TaskRoute }
@@ -112,7 +131,8 @@ export type CoordinatorEvent =
   | { type: 'step-start'; step: number; total: number }
   | { type: 'agent-start'; role: AgentRole; label: string }
   | { type: 'agent-done'; role: AgentRole; label: string; status: SubagentResult['status']; summary: string; error?: string }
-  | { type: 'done' };
+  | { type: 'done' }
+  | ToolEvent;
 
 /** Performance instrumentation for one run (spec: measure + log). */
 export interface RunMetrics {

@@ -22,6 +22,7 @@ import type {
   PlannerInput,
   RunMetrics,
   SubagentResult,
+  ToolEvent,
 } from './types.ts';
 
 export interface CoordinatorDeps {
@@ -39,6 +40,8 @@ export interface CoordinatorDeps {
   planner?: Planner;
   /** Progress events for the CLI (never chain-of-thought). */
   onEvent?: (event: CoordinatorEvent) => void;
+  /** Structured tool-level events (tool-start/end, file-changed, permission-*). */
+  onToolEvent?: (event: ToolEvent) => void;
   /** Max agents running at once within a parallel step. */
   maxConcurrency?: number;
   /** Token budget for the compacted context handed to the next step. */
@@ -418,6 +421,13 @@ export class Coordinator {
           undo: runtime.undo,
           askPermission: this.serializedAsk,
           onStatus: (msg) => emit({ type: 'status', message: msg }),
+          onToolEvent: (e) => {
+            // A single channel to the UI: tool events flow through onEvent,
+            // and the dedicated onToolEvent callback stays available for
+            // consumers that want tool activity separately from progress.
+            emit(e);
+            this.deps.onToolEvent?.(e);
+          },
           signal: this.deps.signal,
         },
         spec,

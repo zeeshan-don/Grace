@@ -6,7 +6,7 @@ import type { UndoStore } from '../session/undo.ts';
 import type { Tool } from '../tools/registry.ts';
 import { compactText } from './compact.ts';
 import { parseStructuredResult } from './structured.ts';
-import type { AgentSpec, SubagentResult } from './types.ts';
+import type { AgentSpec, SubagentResult, ToolEvent } from './types.ts';
 
 /** AgentLoop prefixes provider failures with this text (see loop.ts runTurn). */
 const PROVIDER_FAILURE_MARKER = 'I could not reach the AI provider';
@@ -23,6 +23,8 @@ export interface RunSubagentOptions {
   askPermission: (command: string, reasons: string[]) => Promise<boolean>;
   /** Progress status lines (tool actions) forwarded to the CLI. */
   onStatus?: (msg: string) => void;
+  /** Structured tool-level events (tool-start/end, file-changed, permission-*). */
+  onToolEvent?: (event: ToolEvent) => void;
   /** Abort signal: Ctrl+C during a task cancels the run safely. */
   signal?: AbortSignal;
 }
@@ -55,6 +57,7 @@ export async function runSubagent(
     maxIterations: spec.maxIterations,
     contextBudget: spec.contextBudget,
     onStatus: opts.onStatus,
+    onToolEvent: opts.onToolEvent,
     signal: opts.signal,
   });
 

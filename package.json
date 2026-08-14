@@ -37,10 +37,13 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "dotenv": "^17.4.2",
-    "groq-sdk": "^1.5.0"
+    "groq-sdk": "^1.5.0",
+    "ink": "^7.1.1",
+    "react": "^19.2.8"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
     "typescript": "^6.0.3"
   }
 }

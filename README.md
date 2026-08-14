@@ -7,28 +7,39 @@ the terminal. The concept: **free AI coding assistance funded by developer-focus
 advertising** (not yet implemented — see [Economics & Advertising](#economics--advertising)).
 
 ```
-╭─────────────────────────────╮
-│            GRACE            │
-│   AI Coding Agent · v0.1.0  │
-╰─────────────────────────────╯
+┌─────────────────────────────────────────────────────┐
+│ GRACE   D:\Projects\my-app      · NVIDIA NIM · qwen/… · Local mode │
+└─────────────────────────────────────────────────────┘
 
-Directory  D:\Projects\my-app
-Provider   NVIDIA NIM
-Model      qwen/qwen2.5-coder-32b-instruct
-Session    logged in as user@example.com
+                      ██████╗  ██████╗  █████╗  ██████╗ ███████╗
+                      ██╔════╝ ██╔══██╗██╔══██╗██╔════╝ ██╔════╝
+                      ██║  ███╗██████╔╝███████║██║  ███╗█████╗
+                      ██║   ██║██╔══██╗██╔══██║██║   ██║██╔══╝
+                      ╚██████╔╝██║  ██║██║  ██║╚██████╔╝███████╗
+                       ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+                            AI Coding Agent
 
-Type /help for commands.
+                      Workspace  D:\Projects\my-app
+                      Model      NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
+                      Session    user@example.com · Local mode
 
-grace>
+╭───────────────────────────────────────────────────────╮
+│ grace> Ask me to fix a bug, add a feature, or type / for commands │
+╰───────────────────────────────────────────────────────╯
 ```
 
-The terminal itself is the interface: `grace>` is a real prompt (history,
-multiline with trailing `\`, Ctrl+C cancels the in-flight task). No fake
-input boxes, no decorative buttons, no dummy suggestions.
+Running `grace` on a terminal takes over the screen with a **full-screen
+interactive TUI** (alternate screen buffer — your previous shell output is
+restored on exit): a real text input with cursor editing and history, a live
+activity feed that scrolls as the agent works, an interactive model/provider
+picker, a slash-command palette, permission dialogs and a branded home
+screen. Every element is real — the TUI is a presentation layer over the same
+agent system, and nothing is faked.
 
 ```bash
-grace                  # interactive REPL in the current terminal
-grace --new-window     # interactive REPL in a new terminal window (same workspace)
+grace                  # full-screen TUI in the current terminal
+                       # (piped/non-TTY: classic `grace>` prompt)
+grace --new-window     # TUI in a new terminal window (same workspace)
 grace "Fix the login bug in this project"   # one-shot run
 ```
 
@@ -429,6 +440,8 @@ Key directories:
 ```
 src/
   cli/        banner, REPL, slash commands, one-shot runner, taskRunner (coordinator wiring)
+  cli/tui/    full-screen TUI (Ink): app, store, components, runner, pickers,
+              palette, permission dialogs — a presentation layer over the agent
   agents/     coordinator.ts · planner.ts · specs.ts · subagent.ts · capabilities.ts
               · compact.ts · structured.ts · modelRouter.ts · browser.ts
   agent/      loop.ts (reason→act→observe) · context.ts (token budget)
@@ -542,8 +555,9 @@ npm run build        # emit dist/
 | 13 | GRACE FREE daily sessions     | ✅ (6 sessions/day × 60 min, server-enforced in Neon, auto-rollover, CLI quota display, tests — no ads, no fake numbers) |
 | 14 | Subagent coordinator          | ✅ (9 specialized agents + central coordinator: planning, narrow context + permissions, parallel delegation, failure recovery, project index, CLI progress UX — tests + docs) |
 | 15 | Primary-agent redesign        | ✅ (fast local router, one primary agent by default, optional planning for complex tasks only, calmer state-based CLI progress, per-run instrumentation — LLM calls / time-to-first-tool, DeepSeek provider added, usage from every internal call aggregated — tests + docs) |
-| 16 | Measure real AI cost/user     | ⏳ (economics docs + `models` pricing table ready — needs live data) |
-| 17 | Advertising (after economics) | ⏳                          |
+| 16 | Full-screen TUI               | ✅ (Ink-powered interactive TUI: alternate screen, real input + history, live activity feed, model/provider pickers from real providers, slash-command palette, interactive permission dialogs, scrolling, resize handling, structured tool events from the agent — unit + interactive mock-terminal tests) |
+| 17 | Measure real AI cost/user     | ⏳ (economics docs + `models` pricing table ready — needs live data) |
+| 18 | Advertising (after economics) | ⏳                          |
 
 ## Validation records
 
@@ -579,6 +593,11 @@ for it:
 
 ## Known limitations (v0.1)
 
+- The full-screen TUI activates only on a real terminal (TTY) with ANSI/VT
+  support — Windows Terminal, VS Code terminal, PowerShell 7+, modern
+  conhost. On legacy consoles, piped/CI sessions, or if Ink fails to load,
+  Grace falls back to the classic `grace>` prompt automatically. Text is
+  UTF-8; run `chcp 65001` in legacy conhost if glyphs look wrong.
 - Token usage from streaming is estimated (Groq only reports usage on the final
   chunk via `x_groq`); the CLI reports the estimate to the backend per run.
 - No multi-turn "continue after iteration limit" resume UI beyond sending

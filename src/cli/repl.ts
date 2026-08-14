@@ -51,8 +51,17 @@ export async function runRepl(opts: ReplOptions = {}): Promise<number> {
   loadEnv(root);
   if (opts.verbose) setVerbose(true);
   const isTty = Boolean(processStdin.isTTY && processStdout.isTTY);
-  if (isTty) return runTty(root, opts);
-  return runPiped(root, opts);
+  if (!isTty) return runPiped(root, opts);
+  // The full-screen TUI is loaded lazily so piped/CI mode never depends on it.
+  try {
+    const { runTui } = await import('./tui/index.ts');
+    return await runTui(root, opts);
+  } catch (err) {
+    console.error(
+      c.yellow(`Full-screen interface unavailable (${(err as Error).message ?? err}) — using the classic prompt.`),
+    );
+    return runTty(root, opts);
+  }
 }
 
 // ---------------------------------------------------------------------------
