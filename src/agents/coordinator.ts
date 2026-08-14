@@ -1,4 +1,5 @@
 import type { AIProvider, ChatMessage, ChatOptions, ChatResult, Usage } from '../providers/types.ts';
+import { TaskCancelledError } from '../agent/loop.ts';
 import { ProjectIndexService } from '../project/index.ts';
 import type { Runtime } from '../runtime.ts';
 import { MemorySession } from '../session/memory.ts';
@@ -46,6 +47,8 @@ export interface CoordinatorDeps {
   projectIndex?: ProjectIndexService;
   /** Max review→fix rounds after the editor runs (default 1, 0 disables). */
   fixRounds?: number;
+  /** Abort signal: Ctrl+C during a task cancels the run safely. */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_CONCURRENCY = 2;
@@ -174,6 +177,7 @@ export class Coordinator {
 
     // Planning is optional and reserved for complex tasks. Everything else
     // starts the primary agent immediately.
+    this.throwIfAborted();
     let plan: AgentPlan;
     let plannerCalls = 0;
     let plannerUsage: Usage | undefined;
@@ -184,12 +188,14 @@ export class Coordinator {
     } else {
       plan = DEFAULT_PRIMARY_PLAN;
     }
+    this.throwIfAborted();
 
     const acc: Accumulator = { changedFiles: new Set(), iterations: 0, toolCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     mergeUsage(acc, plannerUsage);
     const results: SubagentResult[] = [];
 
     for (let s = 0; s < plan.steps.length; s += 1) {
+      this.throwIfAborted();
       const step = plan.steps[s] as AgentPlan['steps'][number];
       emit({ type: 'step-start', step: s + 1, total: plan.steps.length });
       // Narrow context: compacted summaries of prior steps + the repository
@@ -412,6 +418,7 @@ export class Coordinator {
           undo: runtime.undo,
           askPermission: this.serializedAsk,
           onStatus: (msg) => emit({ type: 'status', message: msg }),
+          signal: this.deps.signal,
         },
         spec,
         task,
@@ -421,9 +428,16 @@ export class Coordinator {
       emit({ type: 'agent-done', role, label: spec.label, status: result.status, summary: result.summary, error: result.error });
       return result;
     } catch (err) {
+      // A user cancellation must propagate (not be swallowed by recovery).
+      if (err instanceof TaskCancelledError) throw err;
       // Per-agent recovery: an unexpected crash must never abort the run.
       return this.fail(spec, `Agent crashed: ${(err as Error).message ?? String(err)}`, emit);
     }
+  }
+
+  /** Stop immediately when the user cancelled the task (Ctrl+C). */
+  private throwIfAborted(): void {
+    if (this.deps.signal?.aborted) throw new TaskCancelledError();
   }
 
   /**

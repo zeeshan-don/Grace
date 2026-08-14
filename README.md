@@ -7,19 +7,33 @@ the terminal. The concept: **free AI coding assistance funded by developer-focus
 advertising** (not yet implemented — see [Economics & Advertising](#economics--advertising)).
 
 ```
-╭──────────────────────────────────────────────────────╮
-│              GRACE  v0.1.0                           │
-│              AI Coding Agent                         │
-│                                                      │
-│  Free AI coding — supported by developer-focused     │
-│  advertising (coming soon)                           │
-╰──────────────────────────────────────────────────────╯
+╭─────────────────────────────╮
+│            GRACE            │
+│   AI Coding Agent · v0.1.0  │
+╰─────────────────────────────╯
+
+Directory  D:\Projects\my-app
+Provider   NVIDIA NIM
+Model      qwen/qwen2.5-coder-32b-instruct
+Session    logged in as user@example.com
+
+Type /help for commands.
+
+grace>
 ```
 
+The terminal itself is the interface: `grace>` is a real prompt (history,
+multiline with trailing `\`, Ctrl+C cancels the in-flight task). No fake
+input boxes, no decorative buttons, no dummy suggestions.
+
 ```bash
-grace                  # interactive REPL
+grace                  # interactive REPL in the current terminal
+grace --new-window     # interactive REPL in a new terminal window (same workspace)
 grace "Fix the login bug in this project"   # one-shot run
 ```
+
+Grace works on the folder you launch it from — `cd` into any project and run
+`grace`; no need to start from the Grace repository itself.
 
 The agent inspects the repository, reads the relevant files, edits code, runs
 tests/builds, reads errors, attempts fixes, and iterates until the task is done
@@ -139,24 +153,34 @@ favour of real per-user sessions.
 
 ### Slash commands
 
-| Command          | What it does                                              |
-| ---------------- | --------------------------------------------------------- |
-| `/help`          | Show help                                                 |
-| `/model`         | Show / switch the model (`/model list` lists live models) |
-| `/status`        | Project type, package manager, git, model, session stats  |
-| `/diff`          | Show current git changes (or agent-modified files)        |
-| `/clear`         | Wipe conversation history                                 |
-| `/undo`          | Revert the agent's most recent file change                |
-| `/login`         | Log in to the GRACE backend (usage reporting on)       |
-| `/logout`        | Log out and remove the local session                      |
-| `/whoami`        | Show the authenticated identity                           |
-| `/exit`          | Quit                                                      |
+| Command           | What it does                                              |
+| ----------------- | --------------------------------------------------------- |
+| `/help`           | Show help                                                 |
+| `/status`         | Workspace, project, git, model and session stats          |
+| `/model`          | Show / switch the model (`/model list` lists live models) |
+| `/provider`       | Show how the provider is selected (`/provider groq` switches to a local Groq key) |
+| `/cd <path>`      | Change the active workspace safely                        |
+| `/diff`           | Show current git changes (or agent-modified files)        |
+| `/clear`          | Clear the terminal screen                                 |
+| `/reset`          | Clear the conversation/task context (keeps the workspace) |
+| `/undo`           | Revert the agent's most recent file change                |
+| `/debug`          | Toggle debug diagnostics (also `/verbose`)                |
+| `/login`          | Log in to the GRACE backend (usage reporting on)          |
+| `/logout`         | Log out and remove the local session                      |
+| `/whoami`         | Show the authenticated identity                           |
+| `/exit`           | Quit                                                      |
+
+Conversation context persists across tasks inside one session (history lives in
+`.zeesh/session.json`); `/reset` clears it while keeping the workspace.
 
 ### CLI flags
 
 ```
 --model <id>     Override the model
 --yes, -y        Auto-approve flagged commands (dangerous!)
+--new-window     Start Grace in a new terminal window (workspace preserved)
+--verbose        Show verbose diagnostics (raw output, agent details)
+--debug          Alias for --verbose
 --help, -h       Show help
 --version, -v    Show version
 ```

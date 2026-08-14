@@ -138,7 +138,9 @@ test('one-shot: a simple task runs the primary agent only (no planner/scout/pick
   const backend = await startBackend();
   writeSession(backend.baseUrl);
   const work = freshDir();
-  const { code, stdout } = await runCli(['Create hello.py and run it'], { cwd: work });
+  // --verbose keeps the debug sections (provider header, timing) visible for
+  // the assertions below; normal mode hides them (see the result UI tests).
+  const { code, stdout } = await runCli(['--verbose', 'Create hello.py and run it'], { cwd: work });
 
   assert.equal(code, 0);
   assert.ok(existsSync(join(work, 'hello.py')), 'file written through the primary-agent flow');
@@ -149,8 +151,8 @@ test('one-shot: a simple task runs the primary agent only (no planner/scout/pick
   assert.ok(!stdout.includes('Project Scout'), 'no Project Scout for a simple task');
   assert.ok(!stdout.includes('File Picker'), 'no File Picker for a simple task');
   assert.ok(!stdout.includes('Code Reviewer'), 'no Code Reviewer for a simple task');
-  // Structured result sections.
-  assert.match(stdout, /Files changed/);
+  // Structured result sections (verbose shows the debug sections).
+  assert.match(stdout, /Updated:/);
   assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /iteration\(s\)/);
   assert.match(stdout, /LLM call/);
@@ -183,10 +185,10 @@ test('interactive: primary-agent task runs then returns to the prompt', async ()
   assert.equal(code, 0);
   assert.ok(existsSync(join(work, 'hello.py')), 'interactive task wrote the file');
   assert.match(stdout, /→ Grace ✓/);
-  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /Updated:/);
   assert.match(stdout, /\+ hello\.py/);
   assert.match(stdout, /Not a git repository/, '/status ran after the task');
-  const summaryIdx = stdout.indexOf('Files changed');
+  const summaryIdx = stdout.indexOf('Updated:');
   const statusIdx = stdout.indexOf('Not a git repository');
   assert.ok(summaryIdx !== -1 && statusIdx > summaryIdx, 'task completed before /status');
   assert.match(stdout, /Goodbye/);

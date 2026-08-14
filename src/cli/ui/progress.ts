@@ -3,17 +3,16 @@
  *
  * Turns coordinator events into concise, non-chain-of-thought progress:
  *
- *   Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
- *
  *   · Grace is working…
  *   • → read_file src/auth/login.ts
  *   • → edit_file src/auth/login.ts
  *   • → run_command npm test
  *   → Grace ✓ — Authentication added
  *
- * - One line per meaningful event: the provider header, a live working line
- *   (`· Grace is working…` / `· Thinker…`), settled status bullets and one
- *   settled line per finished agent.
+ * - One line per meaningful event: a live working line (`· Grace is working…`),
+ *   settled status bullets and one settled line per finished agent.
+ * - The provider/model header and specialist agent names (Thinker, Reviewer,
+ *   …) are DEBUG output only — normal users never see internal agent ceremony.
  * - The working line is redrawn in place with a subtle spinner on TTY; on
  *   plain/piped output every line is printed deterministically as it settles.
  * - A greeting ("hi") renders nothing at all — the reply is printed directly.
@@ -83,7 +82,7 @@ export class ProgressRenderer {
     this.sym = symbols();
     this.th = theme();
     this.providerLine =
-      opts.providerLabel && opts.model
+      this.verbose && opts.providerLabel && opts.model
         ? `  ${this.th.dim(`Grace ${this.sym.bullet} ${opts.providerLabel} ${this.sym.bullet} ${opts.model}`)}`
         : undefined;
   }
@@ -117,8 +116,9 @@ export class ProgressRenderer {
         break;
       case 'agent-start':
         // The primary agent (Grace) is covered by the 'working' line — only
-        // specialist agents get their own start line.
-        if (evt.role !== 'editor') {
+        // specialist agents get their own start line, and only in debug mode
+        // (normal users never see internal agent ceremony).
+        if (evt.role !== 'editor' && this.verbose) {
           this.setCurrent(`  ${this.th.dim(`${this.sym.bullet} ${evt.label}${this.sym.ellipsis}`)}`);
         }
         break;
@@ -186,7 +186,11 @@ export class ProgressRenderer {
     return lines;
   }
 
-  /** "Label ✓ — summary" (or ✗ / !) once an agent finished. */
+  /**
+   * "Grace ✓ — summary" (or ✗ / !) once an agent finished. The primary agent
+   * keeps its name (it IS the product); specialist agent names are debug-only
+   * so their finished line renders as just "✓ — summary".
+   */
   private renderDone(evt: Extract<CoordinatorEvent, { type: 'agent-done' }>): string {
     const { sym, th } = this;
     const mark =
@@ -197,6 +201,7 @@ export class ProgressRenderer {
           : th.warn(sym.warn);
     const text = evt.status === 'completed' ? evt.summary : evt.status === 'failed' ? (evt.error ?? evt.summary) : evt.summary;
     const detail = text ? ` ${th.dim(`— ${oneLiner(text)}`)}` : '';
+    if (evt.role !== 'editor' && !this.verbose) return `${mark}${detail}`;
     return `${th.agent(evt.label)} ${mark}${detail}`;
   }
 

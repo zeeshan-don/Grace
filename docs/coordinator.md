@@ -188,8 +188,6 @@ mode. The progress renderer (`src/cli/ui/progress.ts`) shows states, not a
 committee:
 
 ```
-Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
-
 · Grace is working…
 • → read_file src/auth/login.ts
 • → edit_file src/auth/login.ts
@@ -200,17 +198,19 @@ Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
 - Greetings render nothing and are answered directly (`Hey. What are we
   building?`) — even without a provider configured.
 - Only high-level state is shown: working, exploring (tool bullets), running
-  commands, done. Never chain-of-thought.
-- The final block shows the composed answer, changed files, validation,
-  provider, time (`12.4s · 3 iteration(s) · 5 tool call(s) · 3 LLM call(s)`)
-  and the GRACE FREE quota line.
+  commands, done. Never chain-of-thought. Internal agent names (thinker,
+  reviewer, …) and the provider/model header are debug-only (`/debug`).
+- The final block shows the composed answer, changed files (`Updated:`),
+  validation and a compact footer (`12.4s · 5 tool calls`). Provider/model,
+  iterations, LLM-call count and token usage live in `/status` and debug mode
+  — never repeated after every task.
 
 ## Instrumentation
 
 Every run records (in `CoordinatorRunResult.metrics`): total **LLM calls**
 (across the primary agent, optional specialists AND the optional planning
 call), time to first response, and time to first tool call. The CLI prints the
-LLM-call count in the Time section; the run's token usage aggregates every
+LLM-call count in debug mode (`/debug`); the run's token usage aggregates every
 internal model call and is reported server-side (`/api/usage`) when logged in.
 
 ## Failure modes

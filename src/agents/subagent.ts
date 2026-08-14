@@ -23,6 +23,8 @@ export interface RunSubagentOptions {
   askPermission: (command: string, reasons: string[]) => Promise<boolean>;
   /** Progress status lines (tool actions) forwarded to the CLI. */
   onStatus?: (msg: string) => void;
+  /** Abort signal: Ctrl+C during a task cancels the run safely. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -53,6 +55,7 @@ export async function runSubagent(
     maxIterations: spec.maxIterations,
     contextBudget: spec.contextBudget,
     onStatus: opts.onStatus,
+    signal: opts.signal,
   });
 
   const result = await loop.run(task);

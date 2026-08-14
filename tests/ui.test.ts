@@ -20,7 +20,7 @@ import { after, test } from 'node:test';
 import type { CoordinatorEvent, CoordinatorRunResult, SubagentResult } from '../src/agents/types.ts';
 import type { AIProvider } from '../src/providers/types.ts';
 import type { Runtime } from '../src/runtime.ts';
-import { box, promptBox } from '../src/cli/ui/box.ts';
+import { box } from '../src/cli/ui/box.ts';
 import { ProgressRenderer } from '../src/cli/ui/progress.ts';
 import {
   classifyFileChanges,
@@ -135,11 +135,10 @@ function runThrough(events: CoordinatorEvent[], opts: { live?: boolean; verbose?
   return writes.join('');
 }
 
-test('progress: non-live output is deterministic — provider line, working, bullets, done', () => {
+test('progress: non-live output is deterministic — working line, bullets, done', () => {
   const out = runThrough(scriptedRun(), { providerLabel: 'NVIDIA NIM', model: 'qwen/qwen2.5-coder-32b-instruct' });
   const lines = out.split('\n').filter(Boolean);
   assert.deepEqual(lines, [
-    '  Grace · NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct',
     '  · Grace is working…',
     '  • → read_file src/auth/login.ts',
     '  • → edit_file src/auth/login.ts',
@@ -147,6 +146,12 @@ test('progress: non-live output is deterministic — provider line, working, bul
     '  → Grace ✓ — Authentication added',
   ]);
   assert.ok(!out.includes('Project Scout'), 'no committee of agents is printed');
+  assert.ok(!out.includes('NVIDIA NIM'), 'provider/model are debug-only (see /status)');
+});
+
+test('progress: verbose mode adds the provider header', () => {
+  const out = runThrough(scriptedRun(), { verbose: true, providerLabel: 'NVIDIA NIM', model: 'qwen/qwen2.5-coder-32b-instruct' });
+  assert.match(out, /Grace · NVIDIA NIM · qwen\/qwen2\.5-coder-32b-instruct/);
 });
 
 test('progress: failed and unavailable agents render ✗ and ! marks', () => {
@@ -162,7 +167,9 @@ test('progress: failed and unavailable agents render ✗ and ! marks', () => {
   ];
   const out = runThrough(events);
   assert.match(out, /→ Grace ✗ — The provider rejected the request/);
-  assert.match(out, /→ Browser ! — No browser backend/);
+  // Specialist names are debug-only — the unavailable agent shows its mark.
+  assert.match(out, /→ ! — No browser backend/);
+  assert.ok(!out.includes('Browser'), 'no specialist name in normal mode');
 });
 
 test('progress: a greeting renders nothing at all', () => {
@@ -174,7 +181,7 @@ test('progress: a greeting renders nothing at all', () => {
   assert.equal(writes.join(''), '', 'no progress circus for a greeting');
 });
 
-test('progress: specialist agents get their own start line', () => {
+test('progress: specialist agent names are debug-only (normal mode hides them)', () => {
   const events: CoordinatorEvent[] = [
     { type: 'route', route: 'complex' },
     { type: 'planning' },
@@ -187,11 +194,16 @@ test('progress: specialist agents get their own start line', () => {
     { type: 'agent-done', role: 'editor', label: 'Grace', status: 'completed', summary: 'Implemented' },
     { type: 'done' },
   ];
+  // Normal mode: no internal agent ceremony, only the finished summary.
   const out = runThrough(events);
   assert.match(out, /· Planning…/);
-  assert.match(out, /· Thinker…/);
-  assert.match(out, /→ Thinker ✓ — Strategy ready/);
+  assert.ok(!out.includes('Thinker'), 'specialist names are debug-only');
+  assert.match(out, /→ ✓ — Strategy ready/);
   assert.match(out, /→ Grace ✓ — Implemented/);
+  // Debug mode: specialist start lines + names appear.
+  const verboseOut = runThrough(events, { verbose: true });
+  assert.match(verboseOut, /· Thinker…/);
+  assert.match(verboseOut, /→ Thinker ✓ — Strategy ready/);
 });
 
 test('progress: verbose mode adds step headers', () => {
@@ -271,19 +283,21 @@ function fakeRuntime(root: string, provider: AIProvider | null = fakeProvider())
   } as unknown as Runtime;
 }
 
-test('results: success sections (files changed, provider, time, follow-ups)', () => {
+test('results: success sections (updated files + compact footer, no noise)', () => {
   const runtime = fakeRuntime('C:\\work\\app');
   const result = fakeResult({ changedFiles: ['src/auth/login.ts', 'src/auth/session.ts'] });
   const out = renderTaskResult({ result, runtime, executionTimeMs: 18_400 });
   assert.match(out, /✓ Done/);
   assert.match(out, /Implemented authentication/);
-  assert.match(out, /Files changed/);
+  assert.match(out, /Updated:/);
   assert.match(out, /\+\s+src\/auth\/login\.ts/);
   assert.match(out, /\+\s+src\/auth\/session\.ts/);
-  assert.match(out, /Provider/);
-  assert.match(out, /Groq · llama-3\.3-70b-versatile/);
-  assert.match(out, /18\.4s · 3 iteration\(s\) · 5 tool call\(s\)/);
-  assert.match(out, /Suggested follow-ups/);
+  // Compact footer replaces the Provider/Time sections.
+  assert.match(out, /18\.4s · 5 tool calls/);
+  // No provider/model/follow-up noise after every task.
+  assert.ok(!out.includes('Provider'), 'provider is /status territory');
+  assert.ok(!out.includes('Suggested follow-ups'), 'no fake follow-ups');
+  assert.ok(!out.includes('iteration(s)'), 'no iteration ceremony in normal mode');
   // No validation section when nothing verified the work.
   assert.ok(!out.includes('Validation'));
 });
@@ -301,7 +315,7 @@ test('results: validation section reflects the test runner + reviewer', () => {
   };
   const runtime = fakeRuntime('C:\\work\\app');
   const out = renderTaskResult({ result: fakeResult({ results: [tester, reviewer] }), runtime, executionTimeMs: 1000 });
-  assert.match(out, /Validation/);
+  assert.match(out, /Validation:/);
   assert.match(out, /✓ Tests — 215\/215 tests passed/);
   assert.match(out, /✓ Review — No critical issues/);
 });
@@ -481,25 +495,8 @@ test('/status panel: all sections render, non-repo handled', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Prompt box
+// Box helpers (startup logo only — there is no fake input box)
 // ---------------------------------------------------------------------------
-
-test('prompt box: boxed hint with a titled border', () => {
-  const out = promptBox(undefined, { width: 44 });
-  const lines = out.split('\n');
-  assert.match(lines[0] as string, /^┌─.*grace.*─┐$/);
-  assert.match(lines[1] as string, /Enter a coding task or \/ for commands/);
-  assert.match(lines[2] as string, /^└─+┘$/);
-});
-
-test('prompt box: ASCII fallback uses plain + and - corners', () => {
-  withEnv({ ZEESH_ASCII: '1', ZEESH_UNICODE: undefined }, () => {
-    const out = promptBox(undefined, { width: 44 });
-    const lines = out.split('\n');
-    assert.match(lines[0] as string, /^\+-+.*grace.*-+\+$/);
-    assert.match(lines[2] as string, /^\+-+-+\+$/);
-  });
-});
 
 test('box: content longer than the width is truncated', () => {
   const out = box('x'.repeat(200), { width: 44 });

@@ -1,22 +1,27 @@
 import { DISPLAY_NAME, TAGLINE, VERSION } from '../meta.ts';
 import { c } from './colors.ts';
-import { divider, kv } from './ui/box.ts';
+import { boxLines, kv } from './ui/box.ts';
 import { symbols, theme } from './ui/theme.ts';
 
 /**
  * Session-start header (GRACE UI).
  *
- * Compact and scannable — no ASCII art:
+ * Compact and scannable — a small logo box plus a few label/value rows, then
+ * straight to the prompt. No ASCII art, no fake input box:
  *
- *   GRACE
- *   GRACE · AI Coding Agent · v0.1.0
- *   ────────────────────────────────
+ *   ╭─────────────────────────────╮
+ *   │            GRACE            │
+ *   │   AI Coding Agent · v0.1.0  │
+ *   ╰─────────────────────────────╯
  *   Directory  D:\Projects\my-app
  *   Provider   NVIDIA NIM
  *   Model      qwen/qwen2.5-coder-32b-instruct
  *   Session    logged in as user@example.com · 58m remaining
  *   Quota      5 sessions remaining
- *   ────────────────────────────────
+ *
+ *   Type /help for commands.
+ *
+ * grace>
  */
 
 export interface BannerInfo {
@@ -33,7 +38,6 @@ export interface BannerInfo {
 }
 
 export function renderBanner(info: BannerInfo): string {
-  const sym = symbols();
   const th = theme();
   const rows = [
     kv('Directory', th.path(info.directory)),
@@ -43,12 +47,14 @@ export function renderBanner(info: BannerInfo): string {
   ];
   if (info.freePlan) rows.push(kv('Quota', info.freePlan));
   return [
-    `  ${c.bold(c.cyan('GRACE'))}`,
-    `  ${c.dim(`${DISPLAY_NAME} · ${TAGLINE} · v${VERSION}`)}`,
-    `  ${c.dim(divider())}`,
+    boxLines([
+      `  ${c.bold(c.cyan(DISPLAY_NAME))}`,
+      `  ${c.dim(`${TAGLINE} · v${VERSION}`)}`,
+    ]),
+    '',
     ...rows,
-    `  ${c.dim(divider())}`,
-    `  ${c.dim(`Enter a coding task or / for commands`)}`,
+    '',
+    `  ${c.dim('Type /help for commands.')}`,
   ].join('\n');
 }
 
@@ -57,14 +63,18 @@ export function renderHelp(): string {
   return [
     c.bold('Commands'),
     c.dim('  /help                Show this help'),
+    c.dim('  /status              Workspace, git, model and session status'),
     c.dim('  /model               Show current provider & model'),
     c.dim('  /model <id>          Switch model (e.g. /model qwen/qwen3.6-27b)'),
     c.dim('  /model list          List models available on the provider'),
-    c.dim('  /status              Project, git, model and session status'),
+    c.dim('  /provider            Show how the provider is selected'),
+    c.dim('  /provider groq       Use a local Groq key for this session'),
+    c.dim('  /cd <path>           Change the active workspace'),
     c.dim('  /diff                Show current git changes (or agent-modified files)'),
-    c.dim('  /clear               Wipe conversation history'),
+    c.dim('  /clear               Clear the terminal screen'),
+    c.dim('  /reset               Clear the conversation/task context (keeps workspace)'),
     c.dim('  /undo                Revert the last file change made by the agent'),
-    c.dim('  /verbose             Toggle verbose diagnostics (raw output, details)'),
+    c.dim('  /debug               Toggle debug diagnostics (also /verbose)'),
     c.dim('  /login               Log in to the GRACE backend'),
     c.dim('  /logout              Log out and remove the local session'),
     c.dim('  /whoami              Show the authenticated identity'),
@@ -80,6 +90,7 @@ export function renderHelp(): string {
     c.dim('  grace "Fix the login bug"   runs once and exits'),
     c.dim('  grace --yes "…"             auto-approve flagged commands (careful!)'),
     c.dim('  grace --verbose "…"         show raw diagnostics for this run'),
+    c.dim('  grace --new-window          start the REPL in a new terminal window'),
     `  ${c.dim(`${sym.bullet} Progress marks: ${sym.check} done · ${sym.cross} failed · ${sym.warn} warning`)}`,
   ].join('\n');
 }

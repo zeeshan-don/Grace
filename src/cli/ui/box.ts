@@ -2,8 +2,11 @@
  * Box/layout helpers (GRACE UI).
  *
  * Small composable pieces — divider, section headers, label/value rows and
- * the prompt box — built on the capability-aware theme so they degrade
- * gracefully on legacy terminals.
+ * multi-line boxes (used only for the compact startup logo) — built on the
+ * capability-aware theme so they degrade gracefully on legacy terminals.
+ *
+ * There is deliberately NO input box: the terminal prompt itself is the
+ * input surface (`grace>`), so nothing in the UI draws a fake textbox.
  */
 import { symbols, theme, type Symbols, type Theme } from './theme.ts';
 
@@ -41,39 +44,35 @@ function clamp(n: number, min: number, max: number): number {
 }
 
 /**
- * Render a single-line box with an optional title in the top border:
+ * Render a single-line box:
  *
- *   ┌─────────── grace ───────────┐
- *   │ Enter a coding task or /…   │
+ *   ┌─────────────────────────────┐
+ *   │ some content                │
  *   └─────────────────────────────┘
  */
 export function box(line: string, opts: BoxOptions = {}): string {
-  const sym: Symbols = symbols();
-  const th: Theme = theme();
-  const width = clamp(opts.width ?? (process.stdout.columns ?? 60), 44, 76);
-  const inner = line.length > width - 4 ? `${line.slice(0, width - 7)}${sym.ellipsis}` : line;
-
-  let top: string;
-  if (opts.title) {
-    const t = ` ${opts.title} `;
-    const side = Math.max(0, width - 2 - t.length);
-    const left = Math.floor(side / 2);
-    const right = side - left;
-    top = `${sym.cornerTl}${sym.hLine.repeat(left)}${th.bold(t)}${sym.hLine.repeat(right)}${sym.cornerTr}`;
-  } else {
-    top = `${sym.cornerTl}${sym.hLine.repeat(width - 2)}${sym.cornerTr}`;
-  }
-  return [
-    top,
-    `${sym.vLine} ${inner.padEnd(width - 4)} ${sym.vLine}`,
-    `${sym.cornerBl}${sym.hLine.repeat(width - 2)}${sym.cornerBr}`,
-  ].join('\n');
+  return boxLines([line], opts);
 }
 
 /**
- * The persistent workspace hint shown at the bottom of the interactive
- * session before the input line (TTY only).
+ * Render a multi-line box with every line centered:
+ *
+ *   ┌─────────────────────────────┐
+ *   │            GRACE            │
+ *   │  AI Coding Agent · v0.1.0   │
+ *   └─────────────────────────────┘
  */
-export function promptBox(hint = 'Enter a coding task or / for commands', opts: BoxOptions = {}): string {
-  return box(hint, { title: 'grace', ...opts });
+export function boxLines(lines: string[], opts: BoxOptions = {}): string {
+  const sym: Symbols = symbols();
+  const width = clamp(opts.width ?? 44, 30, 76);
+  const inner = width - 4; // space + content + space inside the border
+  const rows = lines.map((line) => {
+    const visible = line.length > inner ? `${line.slice(0, inner - 1)}${sym.ellipsis}` : line;
+    return `${sym.vLine} ${visible.padStart(Math.floor((inner + visible.length) / 2)).padEnd(inner)} ${sym.vLine}`;
+  });
+  return [
+    `${sym.cornerTl}${sym.hLine.repeat(width - 2)}${sym.cornerTr}`,
+    ...rows,
+    `${sym.cornerBl}${sym.hLine.repeat(width - 2)}${sym.cornerBr}`,
+  ].join('\n');
 }

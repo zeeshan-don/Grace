@@ -1,27 +1,23 @@
 /**
  * Structured result rendering (GRACE UI).
  *
- * Turns a finished coordinator run into clearly separated sections:
+ * Turns a finished coordinator run into compact, real output:
  *
  *   ✓ Done
  *   Implemented dashboard authentication.
  *
- *   Files changed
+ *   Updated:
  *     + src/auth/login.ts
  *     M src/auth/session.ts
  *
- *   Validation
+ *   Validation:
  *     ✓ Tests — 215/215 passed
  *
- *   Provider
- *     NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
+ *     18.4s · 5 tool calls
  *
- *   Time
- *     18.4s · 3 iteration(s) · 5 tool call(s)
- *
- *   Suggested follow-ups
- *     → Review the changes /diff
- *
+ * Provider/model live in /status, never repeated after every task. There are
+ * NO "suggested follow-ups" — the prompt itself is the interface. Debug
+ * diagnostics (plan, agent details, usage, full timing) are verbose-only.
  * Sections that carry no information are omitted. Also exports the pure
  * renderers behind /model and /status plus the long-output collapse helper.
  */
@@ -71,7 +67,7 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
   const files = classifyFileChanges(result.changedFiles, runtime.root);
   if (files.length > 0) {
     const MAX_SHOWN = 12;
-    parts.push(section('Files changed'));
+    parts.push(section('Updated:'));
     for (const f of files.slice(0, MAX_SHOWN)) {
       parts.push(`  ${statusMark(f.status, th)} ${th.path(f.path)}`);
     }
@@ -83,32 +79,31 @@ export function renderTaskResult(info: TaskResultRenderInfo): string {
 
   const validation = validationLines(result.results, runtime.root);
   if (validation.length > 0) {
-    parts.push(section('Validation'));
+    parts.push(section('Validation:'));
     parts.push(...validation);
     parts.push('');
   }
 
-  parts.push(section('Provider'));
-  const served = runtime.provider instanceof RemoteProvider ? (runtime.provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
-  const providerLabel = served?.label ?? runtime.provider?.label ?? 'unknown';
-  const model = runtime.provider?.getModel().id ?? '—';
-  parts.push(`  ${th.provider(providerLabel)} ${sym.bullet} ${th.model(model)}`);
-  parts.push('');
-
-  parts.push(section('Time'));
-  const llm = result.metrics ? ` · ${result.metrics.llmCalls} LLM call(s)` : '';
-  const timeValue = `${th.number(formatDuration(executionTimeMs))} · ${result.iterations} iteration(s) · ${result.toolCalls} tool call(s)${llm}`;
-  parts.push(`  ${timeValue}`);
-  parts.push('');
-
-  const followUps = suggestedFollowUps(info);
-  if (followUps.length > 0) {
-    parts.push(section('Suggested follow-ups'));
-    parts.push(...followUps);
-    parts.push('');
-  }
+  // Compact single-line footer: duration + tool calls. Provider/model, plan
+  // details and token usage are debug output (/status shows them on demand).
+  const toolWord = result.toolCalls === 1 ? 'tool call' : 'tool calls';
+  parts.push(`  ${th.dim(`${th.number(formatDuration(executionTimeMs))} · ${result.toolCalls} ${toolWord}`)}`);
 
   if (verbose) {
+    parts.push('');
+    const served = runtime.provider instanceof RemoteProvider ? (runtime.provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
+    const providerLabel = served?.label ?? runtime.provider?.label ?? 'unknown';
+    const model = runtime.provider?.getModel().id ?? '—';
+    parts.push(section('Provider'));
+    parts.push(`  ${th.provider(providerLabel)} ${sym.bullet} ${th.model(model)}`);
+    parts.push('');
+
+    parts.push(section('Time'));
+    const llm = result.metrics ? ` · ${result.metrics.llmCalls} LLM call(s)` : '';
+    const timeValue = `${th.number(formatDuration(executionTimeMs))} · ${result.iterations} iteration(s) · ${result.toolCalls} tool call(s)${llm}`;
+    parts.push(`  ${timeValue}`);
+    parts.push('');
+
     const plan = renderPlan(result);
     if (plan) {
       parts.push(section('Plan'));
@@ -157,21 +152,6 @@ function agentValidationLine(label: string, r: SubagentResult, sym: Symbols, th:
   if (r.status === 'completed') return `  ${th.success(sym.check)} ${label} — ${detail}`;
   if (r.status === 'failed') return `  ${th.error(sym.cross)} ${label} — ${detail}`;
   return `  ${th.warn(sym.warn)} ${label} — ${detail}`;
-}
-
-/** Data-driven follow-up suggestions (only when they make sense). */
-function suggestedFollowUps(info: TaskResultRenderInfo): string[] {
-  const sym = symbols();
-  const th = theme();
-  const out: string[] = [];
-  if (info.result.changedFiles.length > 0) {
-    out.push(`  ${sym.arrow} Review the changes ${th.command('/diff')}`);
-  }
-  out.push(`  ${sym.arrow} Inspect project & session state ${th.command('/status')}`);
-  if (info.runtime.provider) {
-    out.push(`  ${sym.arrow} Switch model ${th.command('/model')}`);
-  }
-  return out;
 }
 
 /** Verbose: one line per plan step, e.g. "1. project-scout → file-picker → editor". */

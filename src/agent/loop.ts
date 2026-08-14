@@ -23,8 +23,18 @@ export interface AgentRunContext {
   onStream?: (text: string) => void;
   /** Overridable permission handler (REPL prompt, --yes, or test stub). */
   askPermission?: (command: string, reasons: string[]) => Promise<boolean>;
+  /** Abort signal: Ctrl+C during a task cancels the run safely. */
+  signal?: AbortSignal;
   maxIterations?: number;
   contextBudget?: number;
+}
+
+/** Thrown when the user cancels an in-flight task (Ctrl+C). */
+export class TaskCancelledError extends Error {
+  constructor() {
+    super('Task cancelled by the user.');
+    this.name = 'TaskCancelledError';
+  }
 }
 
 export interface AgentRunResult {
@@ -78,10 +88,12 @@ export class AgentLoop {
     onStatus?.('Thinking…');
 
     while (iterations < maxIterations) {
+      this.throwIfAborted();
       iterations += 1;
       const trimmed = trimMessages(messages, budget);
 
       const { content, toolCalls: calls, streamUsage, error } = await this.runTurn(trimmed, toolDefs);
+      this.throwIfAborted();
       if (error) {
         finalText = `I could not reach the AI provider:\n${error}`;
         session.pushMessage({ role: 'assistant', content: finalText });
@@ -105,6 +117,7 @@ export class AgentLoop {
 
       toolCalls += calls.length;
       for (const call of calls) {
+        this.throwIfAborted();
         await this.executeTool(call, messages);
         this.trackChangedFiles(changedFiles, call);
       }
@@ -140,6 +153,11 @@ export class AgentLoop {
     }));
   }
 
+  /** Stop immediately when the user cancelled the task (Ctrl+C). */
+  private throwIfAborted(): void {
+    if (this.ctx.signal?.aborted) throw new TaskCancelledError();
+  }
+
   /**
    * Stream one model turn, collecting content and tool-call deltas.
    *
@@ -162,7 +180,8 @@ export class AgentLoop {
       const acc = new Map<number, ToolCallAccumulator>();
       let usage: Usage | undefined;
       try {
-        const events = provider.streamChat(messages, { tools: toolDefs, temperature: 0.2 });
+        this.throwIfAborted();
+        const events = provider.streamChat(messages, { tools: toolDefs, temperature: 0.2, signal: this.ctx.signal });
         for await (const event of events) {
           if (event.type === 'content') {
             content += event.content;
@@ -186,6 +205,8 @@ export class AgentLoop {
           }));
         return { content, toolCalls, streamUsage: usage };
       } catch (err) {
+        // A user cancellation is not a provider failure — surface it as such.
+        if (this.ctx.signal?.aborted) throw new TaskCancelledError();
         lastError = (err as Error).message ?? String(err);
         const rateLimited = /rate.?limit|TPM|too large|429|413/i.test(lastError);
         const isLastAttempt = attempt >= MAX_TURN_ATTEMPTS - 1;

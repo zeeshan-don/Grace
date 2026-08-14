@@ -1,4 +1,6 @@
 import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { statSync } from 'node:fs';
 import { createInterface as createInterfaceEvents } from 'node:readline';
 import { createInterface as createInterfacePromises } from 'node:readline/promises';
 import { stdin as processStdin, stdout as processStdout, cwd } from 'node:process';
@@ -11,10 +13,10 @@ import { shortPath } from '../util/text.ts';
 import { cmdLogin, cmdLogout, cmdRegister, cmdWhoami } from './authCommands.ts';
 import { renderBanner } from './banner.ts';
 import { c } from './colors.ts';
-import { cmdClear, cmdDiff, cmdHelp, cmdModel, cmdStatus, cmdUndo } from './commands.ts';
+import { cmdClear, cmdDiff, cmdHelp, cmdModel, cmdProvider, cmdReset, cmdStatus, cmdUndo } from './commands.ts';
 import { bannerFreePlanLine, formatCountdown, sessionSecondsLeft } from './freePlan.ts';
 import { runTask } from './taskRunner.ts';
-import { promptBox } from './ui/box.ts';
+import { kv } from './ui/box.ts';
 import { theme } from './ui/theme.ts';
 import { isVerbose, setVerbose, toggleVerbose } from './verbose.ts';
 
@@ -24,9 +26,25 @@ export interface ReplOptions {
   verbose?: boolean;
 }
 
-/** Interactive prompt (TTY) — branded, clean. */
-const PROMPT = c.bold('grace') + c.cyan('› ');
+/**
+ * The one real interactive prompt. The terminal itself is the UI — there is
+ * no fake textbox drawn around it.
+ */
+const PROMPT = c.bold('grace') + c.cyan('> ');
 const CONTINUATION_PROMPT = c.cyan('… ');
+
+/**
+ * Mutable REPL state. `/cd` swaps the runtime (new workspace); every task and
+ * slash command reads the current one.
+ */
+interface ReplContext {
+  runtime: Runtime;
+  /** Build a fresh runtime for a root, reusing the session's permission hook. */
+  makeRuntime(root: string): Runtime;
+}
+
+/** The in-flight task's abort controller — Ctrl+C cancels it (TTY mode). */
+let activeTask: AbortController | null = null;
 
 export async function runRepl(opts: ReplOptions = {}): Promise<number> {
   const root = cwd();
@@ -43,21 +61,34 @@ export async function runRepl(opts: ReplOptions = {}): Promise<number> {
 
 async function runTty(root: string, opts: ReplOptions): Promise<number> {
   const rl = createInterfacePromises({ input: processStdin, output: processStdout, terminal: true });
-  const runtime = createRuntime(root, {
-    yes: opts.yes,
-    model: opts.model,
-    ask: (cmd, reasons) => askPermission(rl, cmd, reasons),
-  });
-  await printBanner(runtime);
-  console.log(promptBox());
+  const makeRuntime = (r: string): Runtime =>
+    createRuntime(r, {
+      yes: opts.yes,
+      model: opts.model,
+      ask: (cmd, reasons) => askPermission(rl, cmd, reasons),
+    });
+  const ctx: ReplContext = { runtime: makeRuntime(root), makeRuntime };
+  await printBanner(ctx.runtime);
 
-  // Ctrl+C at the prompt: close the interface → pending question rejects → exit cleanly.
+  // Ctrl+C while idle at the prompt: close the interface → the pending
+  // question rejects → exit cleanly.
   rl.on('SIGINT', () => {
     rl.close();
   });
 
+  // Ctrl+C while a task is running: cancel it safely instead of dying.
+  process.on('SIGINT', () => {
+    if (activeTask) {
+      activeTask.abort();
+      processStdout.write('\n' + c.dim('Cancel requested — stopping…') + '\n');
+    } else {
+      console.log(c.dim('Goodbye.'));
+      process.exit(0);
+    }
+  });
+
   const finish = () => rl.close();
-  await runLoop(runtime, nextTaskTty(rl), finish, () => console.log(promptBox()));
+  await runLoop(ctx, nextTaskTty(rl), finish);
   console.log(c.dim('Goodbye.'));
   return 0;
 }
@@ -93,8 +124,9 @@ function nextTaskTty(
 // ---------------------------------------------------------------------------
 
 async function runPiped(root: string, opts: ReplOptions): Promise<number> {
-  const runtime = createRuntime(root, { yes: opts.yes, model: opts.model });
-  await printBanner(runtime);
+  const makeRuntime = (r: string): Runtime => createRuntime(r, { yes: opts.yes, model: opts.model });
+  const ctx: ReplContext = { runtime: makeRuntime(root), makeRuntime };
+  await printBanner(ctx.runtime);
 
   const rl = createInterfaceEvents({ input: processStdin, crlfDelay: Infinity });
   let closed = false;
@@ -132,7 +164,7 @@ async function runPiped(root: string, opts: ReplOptions): Promise<number> {
     return buffer;
   };
 
-  await runLoop(runtime, nextTask, () => {});
+  await runLoop(ctx, nextTask, () => {});
   rl.close();
   console.log(c.dim('Goodbye.'));
   return 0;
@@ -143,10 +175,9 @@ async function runPiped(root: string, opts: ReplOptions): Promise<number> {
 // ---------------------------------------------------------------------------
 
 async function runLoop(
-  runtime: Runtime,
+  ctx: ReplContext,
   nextTask: () => Promise<string | null>,
   finish: () => void,
-  afterTask?: () => void,
 ): Promise<void> {
   while (true) {
     const task = await nextTask();
@@ -162,7 +193,7 @@ async function runLoop(
       const arg = rest.join(' ');
       if (!cmd) continue;
       try {
-        const shouldExit = await handleSlash(runtime, cmd, arg);
+        const shouldExit = await handleSlash(ctx, cmd, arg);
         if (shouldExit) {
           finish();
           return;
@@ -175,18 +206,22 @@ async function runLoop(
     }
 
     // A failing task must never kill the session — report the error and return
-    // to the prompt so the user can try another task.
+    // to the prompt so the user can try another task. Ctrl+C aborts it.
+    const controller = new AbortController();
+    activeTask = controller;
     try {
-      await runTask(runtime, trimmed, { awaitUsageReport: false, verbose: isVerbose() });
+      await runTask(ctx.runtime, trimmed, { awaitUsageReport: false, verbose: isVerbose(), signal: controller.signal });
     } catch (err) {
       console.log(c.red('Task failed unexpectedly: ' + ((err as Error).message ?? err)));
       console.log(c.dim('Returning to the prompt — try again or run /help.'));
+    } finally {
+      activeTask = null;
     }
-    afterTask?.();
   }
 }
 
-async function handleSlash(runtime: Runtime, cmd: string, arg: string): Promise<boolean> {
+async function handleSlash(ctx: ReplContext, cmd: string, arg: string): Promise<boolean> {
+  const { runtime } = ctx;
   switch (cmd) {
     case '/help':
       await cmdHelp();
@@ -194,20 +229,60 @@ async function handleSlash(runtime: Runtime, cmd: string, arg: string): Promise<
     case '/model':
       await cmdModel(runtime, arg);
       break;
+    case '/provider':
+      await cmdProvider(runtime, arg);
+      break;
     case '/status':
       await cmdStatus(runtime);
       break;
+    case '/cd': {
+      const dir = arg.trim();
+      if (!dir) {
+        console.log(c.yellow('Usage: /cd <directory>'));
+        break;
+      }
+      const target = resolve(runtime.root, dir);
+      let isDir = false;
+      try {
+        isDir = statSync(target).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) {
+        console.log(c.red(`Not a directory: ${target}`));
+        break;
+      }
+      const next = ctx.makeRuntime(target);
+      ctx.runtime = next;
+      const th = theme();
+      console.log(c.green('Workspace changed.'));
+      console.log(kv('Workspace', th.path(next.root)));
+      console.log(kv('Provider', next.provider ? th.provider(next.provider.label) : c.yellow('not configured')));
+      console.log(kv('Model', next.provider ? th.model(next.provider.getModel().id) : th.dim('—')));
+      break;
+    }
     case '/diff':
       await cmdDiff(runtime);
       break;
     case '/clear':
-      await cmdClear(runtime);
+      await cmdClear();
+      break;
+    case '/reset':
+      await cmdReset(runtime);
       break;
     case '/undo':
       await cmdUndo(runtime);
       break;
+    case '/debug': {
+      const mode = arg.trim().toLowerCase();
+      if (mode === 'on') setVerbose(true);
+      else if (mode === 'off') setVerbose(false);
+      else toggleVerbose();
+      console.log(c.green(`Debug mode: ${isVerbose() ? 'on' : 'off'}.`));
+      break;
+    }
     case '/verbose':
-      console.log(c.green(`Verbose mode: ${toggleVerbose() ? 'on' : 'off'}.`));
+      console.log(c.green(`Debug mode: ${toggleVerbose() ? 'on' : 'off'}.`));
       break;
     case '/login':
       await cmdLogin(arg);

@@ -1,9 +1,11 @@
 import { homedir } from 'node:os';
 import { ApiClient } from '../auth/client.ts';
 import { loadSession } from '../auth/session.ts';
-import { loadAppConfig, saveAppConfig, DEFAULT_MODELS } from '../config/config.ts';
+import { groqApiKey, loadAppConfig, saveAppConfig, DEFAULT_MODELS } from '../config/config.ts';
+import { pickModelForProvider } from '../agents/modelRouter.ts';
 import { diffStat, diffUnified, gitSummary, statusShort } from '../git/git.ts';
 import { projectLabel } from '../project/detect.ts';
+import { createProvider } from '../providers/registry.ts';
 import { RemoteProvider } from '../providers/remote.ts';
 import type { Runtime } from '../runtime.ts';
 import { shortPath } from '../util/text.ts';
@@ -233,9 +235,70 @@ export async function cmdDiff(runtime: Runtime): Promise<void> {
   }
 }
 
-export async function cmdClear(runtime: Runtime): Promise<void> {
+/**
+ * /clear — clear the terminal screen (a real terminal clear, not a fake one).
+ * The conversation is untouched: use /reset to clear the task context.
+ */
+export async function cmdClear(): Promise<void> {
+  if (process.stdout.isTTY) {
+    process.stdout.write('\x1b[2J\x1b[H');
+  }
+}
+
+/** /reset — wipe the conversation/task context but keep the workspace. */
+export async function cmdReset(runtime: Runtime): Promise<void> {
   runtime.session.clear();
-  console.log(c.green('Conversation history cleared.'));
+  console.log(c.green('Conversation and task context cleared (workspace kept).'));
+}
+
+/**
+ * /provider — show how the provider is selected, or switch to a local Groq
+ * provider when a GROQ_API_KEY is configured. Other providers are served
+ * server-side through the GRACE backend and can't be switched to locally.
+ */
+export async function cmdProvider(runtime: Runtime, arg: string): Promise<void> {
+  const provider = runtime.provider;
+  const argTrim = arg.trim();
+
+  if (argTrim === '') {
+    const served = provider instanceof RemoteProvider ? (provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
+    console.log(renderModelPanel({
+      providerAvailable: provider !== null,
+      providerLabel: served?.label ?? provider?.label ?? '',
+      servedVia: served ? provider?.label : undefined,
+      model: provider?.getModel().id ?? '',
+      contextWindow: provider?.getModel().contextWindow ?? 0,
+      providerError: runtime.providerError ?? 'No provider configured.',
+    }));
+    console.log('');
+    console.log(c.dim('How the provider is chosen:'));
+    console.log(c.dim('  • A local GROQ_API_KEY uses Groq directly (offline/self-hosted).'));
+    console.log(c.dim('  • Otherwise model calls proxy through the GRACE backend.'));
+    console.log(c.dim('  • /provider groq switches to a local Groq provider (key required).'));
+    return;
+  }
+
+  const target = argTrim.toLowerCase();
+  if (target === 'groq') {
+    const key = groqApiKey();
+    if (!key) {
+      console.log(c.red('No GROQ_API_KEY configured — add it to ~/.zeesh/env or the project .env first.'));
+      return;
+    }
+    const model = pickModelForProvider('groq', 'coding', runtime.model);
+    runtime.provider = createProvider('groq', { apiKey: key, model });
+    runtime.model = model;
+    saveAppConfig({ ...loadAppConfig(), provider: 'groq', model });
+    console.log(c.green(`Provider set to Groq (${model}).`));
+    return;
+  }
+  if (target === 'nvidia' || target === 'deepseek') {
+    console.log(
+      c.yellow(`"${target}" is served server-side only (GRACE backend). A local key for it is not supported on the CLI — /provider groq uses Groq directly; otherwise /login routes through the backend.`),
+    );
+    return;
+  }
+  console.log(c.yellow(`Unknown provider "${argTrim}". Supported locally: groq — others route through the GRACE backend.`));
 }
 
 export async function cmdUndo(runtime: Runtime): Promise<void> {

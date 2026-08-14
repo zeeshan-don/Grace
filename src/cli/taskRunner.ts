@@ -2,10 +2,12 @@ import { Coordinator } from '../agents/coordinator.ts';
 import { classifyTask, conversationReply } from '../agents/fastRouter.ts';
 import { RoleModelRouter } from '../agents/roleRouter.ts';
 import type { CoordinatorRunResult } from '../agents/types.ts';
+import { TaskCancelledError } from '../agent/loop.ts';
 import { reportRunUsage } from '../auth/reporting.ts';
 import { ProjectIndexService } from '../project/index.ts';
 import { RemoteProvider } from '../providers/remote.ts';
 import type { Runtime } from '../runtime.ts';
+import { c } from './colors.ts';
 import { ProgressRenderer } from './ui/progress.ts';
 import { renderError, renderTaskResult } from './ui/results.ts';
 import { symbols } from './ui/theme.ts';
@@ -17,6 +19,8 @@ export interface TaskRunOptions {
   awaitUsageReport?: boolean;
   /** Show raw diagnostics (plan, agent details, more output). */
   verbose?: boolean;
+  /** Abort signal: Ctrl+C during a task cancels the run safely. */
+  signal?: AbortSignal;
 }
 
 /** One shared, maintained project index per runtime (survives across tasks). */
@@ -34,7 +38,6 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
   // Greetings never need a provider, an index or any agent — answer instantly.
   const route = classifyTask(input).route;
   if (route === 'conversation') {
-    console.log('');
     console.log(conversationReply(input));
     return 0;
   }
@@ -57,10 +60,12 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
   // plans) still resolve their own route through the Model Router.
   const roleRouter = new RoleModelRouter(runtime);
   const served = runtime.provider instanceof RemoteProvider ? (runtime.provider.serverProvider ?? RemoteProvider.sharedServerProvider()) : null;
+  const verbose = opts.verbose ?? isVerbose();
   const progress = new ProgressRenderer({
-    verbose: opts.verbose ?? isVerbose(),
-    providerLabel: served?.label ?? runtime.provider.label,
-    model: runtime.provider.getModel().id,
+    verbose,
+    // Provider/model are debug output — normal users see them in /status.
+    providerLabel: verbose ? (served?.label ?? runtime.provider.label) : undefined,
+    model: verbose ? runtime.provider.getModel().id : undefined,
   });
   const coordinator = new Coordinator({
     runtime,
@@ -68,6 +73,7 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
     onEvent: (e) => progress.event(e),
     providerFactory: (role, spec) => (role === 'editor' ? runtime.provider : roleRouter.providerFor(role, spec)),
     plannerProvider: roleRouter.plannerProvider(),
+    signal: opts.signal,
   });
 
   let result: CoordinatorRunResult;
@@ -75,6 +81,11 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
     result = await coordinator.run(input);
   } catch (err) {
     progress.end();
+    if (err instanceof TaskCancelledError) {
+      console.log('');
+      console.log(c.dim('Cancelled.'));
+      return 0;
+    }
     console.log(renderError('Task failed', (err as Error).message ?? String(err)));
     return 1;
   }
@@ -92,7 +103,7 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
     return 0;
   }
 
-  console.log(renderTaskResult({ result, runtime, executionTimeMs, verbose: opts.verbose ?? isVerbose() }));
+  console.log(renderTaskResult({ result, runtime, executionTimeMs, verbose }));
 
   // GRACE FREE: daily session quota from the server's last response. Role
   // routing creates one RemoteProvider per agent tier, so the freshest state

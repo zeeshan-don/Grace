@@ -223,9 +223,9 @@ test('one-shot: E2E with mock backend (agent loop writes hello.py)', async () =>
   assert.equal(code, 0, 'one-shot run completes successfully');
   // The agent loop exercised the real write_file tool → file exists.
   assert.ok(existsSync(join(work, 'hello.py')), 'agent wrote hello.py');
-  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /Updated:/);
   assert.match(stdout, /\+ hello\.py/);
-  assert.match(stdout, /iteration/);
+  assert.match(stdout, /tool call/);
   assert.match(stdout, /one-shot run/);
 });
 
@@ -236,7 +236,8 @@ test('interactive: starts with the banner and exits on EOF', async () => {
   const { code, stdout } = await runCli([]);
   assert.equal(code, 0, 'exits cleanly on EOF');
   assert.match(stdout, /GRACE/);
-  assert.ok(stdout.includes('Enter a coding task or / for commands'), 'shows the prompt hint');
+  assert.match(stdout, /Type \/help for commands/, 'shows the /help hint instead of a fake input box');
+  assert.ok(!stdout.includes('Enter a coding task or / for commands'), 'no fake input box');
   assert.match(stdout, /Goodbye/);
   assert.match(stdout, /Directory/);
   assert.match(stdout, /not configured/);
@@ -275,15 +276,15 @@ test('interactive: full task flow with mock backend returns to the prompt', asyn
   assert.equal(code, 0, 'interactive session exits cleanly');
   // The agent loop created the file.
   assert.ok(existsSync(join(work, 'hello.py')), 'agent wrote hello.py via the existing tool loop');
-  assert.match(stdout, /Files changed/);
+  assert.match(stdout, /Updated:/);
   assert.match(stdout, /\+ hello\.py/);
-  // The summary line includes elapsed time.
-  assert.match(stdout, /iteration\(s\)/);
+  // The compact footer includes elapsed time + tool calls.
+  assert.match(stdout, /tool call/);
   // /status ran after the task → output contains project info.
   assert.match(stdout, /Not a git repository/);
   // The /status output appears after the task summary, proving we returned to
   // the prompt.
-  const summaryIdx = stdout.indexOf('Files changed');
+  const summaryIdx = stdout.indexOf('Updated:');
   const statusIdx = stdout.indexOf('Not a git repository');
   assert.ok(summaryIdx !== -1 && statusIdx > summaryIdx, 'session continued after the task');
   assert.match(stdout, /Goodbye/);
