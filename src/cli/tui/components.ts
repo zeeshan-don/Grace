@@ -5,12 +5,16 @@
  * the project runs TypeScript through Node's native type stripping, so the
  * tree is built with createElement (`h`). Colors come from Ink Text props;
  * all text is ANSI-free.
+ *
+ * Visual hierarchy (home): GRACE logo → input → command shortcuts → quiet
+ * status row. Session mode swaps the hero for a slim task header and the
+ * live activity feed. Everything interactive is wired to the store.
  */
 import { createElement as h, useEffect, useState, type ReactNode } from 'react';
 import { Box, Text, useWindowSize } from 'ink';
-import { symbols } from '../ui/theme.ts';
-import { logoLines, wordmark } from './logo.ts';
-import { SLASH_COMMANDS } from './commands.ts';
+import { supportsUnicode, symbols } from '../ui/theme.ts';
+import { chooseLogoFor, wordmark } from './logo.ts';
+import { HOME_SHORTCUTS, SLASH_COMMANDS } from './commands.ts';
 import type { TuiStore } from './store.ts';
 import type { ActivityItem, ActivityKind } from './types.ts';
 
@@ -45,6 +49,13 @@ function colorForKind(kind: ActivityKind): { color?: string; bold?: boolean; dim
   }
 }
 
+/** Truncate long values with an ellipsis so nothing overflows its column. */
+function fit(text: string, width: number): string {
+  if (text.length <= width) return text;
+  if (width <= 1) return '…';
+  return `${text.slice(0, width - 1)}…`;
+}
+
 /** Animated spinner (subtle, only while the agent works). */
 export function Spinner({ label }: { label: string }): ReactNode {
   const [frame, setFrame] = useState(0);
@@ -68,143 +79,265 @@ function Overlay({ children, title }: { children?: ReactNode; title?: string }):
 }
 
 // ---------------------------------------------------------------------------
-// Header + footer
+// Session header (coding mode)
 // ---------------------------------------------------------------------------
 
-export function StatusHeader({ store }: { store: TuiStore }): ReactNode {
+/** Slim header above the feed: wordmark, current model, current task. */
+export function TaskHeader({ store }: { store: TuiStore }): ReactNode {
   const info = store.info;
+  const sym = symbols();
   const size = useWindowSize();
-  const narrow = (size.columns ?? 80) < 60;
+  const columns = size.columns ?? 80;
+  const lastUser = lastUserItem(store);
+  const model = info.providerAvailable ? (info.model || info.provider || '') : (info.providerError ?? '');
 
-  const statusParts: string[] = [];
-  if (info.providerAvailable) {
-    statusParts.push(`${info.provider}`);
-    if (!narrow) statusParts.push(`${info.model}`);
+  return h(
+    Box,
+    { flexDirection: 'column', paddingX: 1 },
+    h(
+      Box,
+      { flexDirection: 'row' },
+      h(Text, { bold: true, color: 'cyan', dimColor: true }, wordmark()),
+      h(Box, { flexGrow: 1 }),
+      model ? h(Text, { color: 'gray', dimColor: true }, fit(model, 44)) : null,
+    ),
+    lastUser
+      ? h(
+          Box,
+          { flexDirection: 'row', marginTop: 1 },
+          h(Text, { bold: true, color: 'cyan' }, '› '),
+          h(Text, { bold: true }, fit(lastUser.text, Math.max(16, columns - 4))),
+        )
+      : null,
+    h(
+      Box,
+      { marginTop: 1 },
+      h(Text, { color: 'gray', dimColor: true }, sym.hLine.repeat(Math.max(12, Math.min(columns - 4, 100)))),
+    ),
+  );
+}
+
+function lastUserItem(store: TuiStore): ActivityItem | undefined {
+  for (let i = store.items.length - 1; i >= 0; i -= 1) {
+    const item = store.items[i];
+    if (item && item.kind === 'user') return item;
   }
-  const busyDot = store.busy
-    ? h(Text, { color: 'cyan', bold: true }, ' ● working')
-    : null;
-
-  return h(
-    Box,
-    { borderStyle: 'single', borderColor: 'gray', paddingX: 1, flexDirection: 'row' },
-    h(Box, { width: narrow ? 8 : 12 }, h(Text, { bold: true, color: 'cyan' }, wordmark())),
-    h(Text, { color: 'gray' }, ' '),
-    h(
-      Box,
-      { flexGrow: 1, flexDirection: 'row' },
-      h(Text, { color: 'gray', dimColor: true }, info.workspace),
-    ),
-    busyDot,
-    h(Text, { color: 'gray' }, ' · '),
-    h(Text, { color: statusTextColor(info) }, statusParts.join(' · ') || (info.providerAvailable ? '' : 'no provider')),
-    h(Text, { color: 'gray' }, ' · '),
-    h(Text, { color: 'green' }, info.session),
-  );
-}
-
-function statusTextColor(info: { providerAvailable: boolean }): string {
-  return info.providerAvailable ? 'cyan' : 'yellow';
-}
-
-export function Footer({ store }: { store: TuiStore }): ReactNode {
-  const size = useWindowSize();
-  if ((size.rows ?? 24) < 14) return null;
-  const focusHint = store.focus === 'input' ? 'Tab: scroll output' : 'Tab: type';
-  return h(
-    Box,
-    { borderStyle: 'single', borderColor: 'gray', paddingX: 1, flexDirection: 'row' },
-    h(
-      Box,
-      { flexGrow: 1, flexDirection: 'row' },
-      h(Text, { dimColor: true }, ' / = commands  ·  ↑↓ history  ·  Ctrl+L clear  ·  Ctrl+C cancel/exit  ·  '),
-      h(Text, { dimColor: true }, focusHint),
-    ),
-    h(Text, { dimColor: true }, ` v${store.info.version}`),
-  );
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
 // Home screen
 // ---------------------------------------------------------------------------
 
+/** Muted subtitle under the logo. */
+const SUBTITLE = 'A I   C O D I N G   A G E N T';
+
+/**
+ * The startup screen: GRACE is the hero, the input is second, shortcuts are
+ * secondary, and one quiet status row sits at the bottom. Everything adapts
+ * to the terminal — the logo shrinks, shortcuts/status hide on short or
+ * narrow screens, and nothing ever overlaps.
+ */
 export function HomeScreen({ store }: { store: TuiStore }): ReactNode {
   const size = useWindowSize();
-  const info = store.info;
   const columns = size.columns ?? 80;
-  const logo = logoBlock(columns);
+  const rows = size.rows ?? 24;
 
-  const rows: ReactNode[] = [
-    h(
-      Box,
-      { flexDirection: 'column', alignItems: 'center' },
-      ...logo.map((line, i) => h(Text, { key: i, bold: true, color: 'cyan' }, line)),
-      h(Text, { color: 'gray' }, 'AI Coding Agent'),
-      h(Text, { color: 'gray', dimColor: true }, ''),
-    ),
-  ];
-
-  rows.push(
-    h(
-      Box,
-      { flexDirection: 'column', alignItems: 'center', marginTop: 1 },
-      h(Text, {}, ' '),
-      h(Text, { color: 'gray' }, 'Workspace'),
-      h(Text, { bold: true }, info.workspace),
-      h(Text, {}, ' '),
-      h(Text, { color: 'gray' }, 'Model'),
-      h(
-        Text,
-        { color: info.providerAvailable ? 'cyan' : 'yellow' },
-        info.providerAvailable ? `${info.provider} · ${info.model}` : info.providerError ?? 'not configured',
-      ),
-      h(Text, {}, ' '),
-      h(Text, { color: 'gray' }, 'Session'),
-      h(Text, { color: 'green' }, info.session),
-      info.freePlan ? h(Text, { color: 'gray' }, info.freePlan) : null,
-    ),
-  );
-
-  rows.push(
-    h(
-      Box,
-      { flexDirection: 'column', alignItems: 'center', marginTop: 1 },
-      h(Text, { color: 'gray', dimColor: true }, 'Type a coding task, or / for commands'),
-      h(Text, { color: 'gray', dimColor: true }, 'Ctrl+C exits · /help for everything else'),
-    ),
-  );
+  // The logo rows have different real widths, so they must be left-aligned
+  // inside a box sized by the logo's real width — centering each row on its
+  // own would shift the letters apart (see logo.ts). The outer box then
+  // centers the whole block once, as a single unit.
+  const { lines: logo, width: logoWidth } = chooseLogoFor(columns, rows);
+  // Vertical budget: 6-row logo + subtitle + input + shortcuts + status
+  // (+ the free-plan quota line when present) ≈ 23.
+  const showShortcuts = rows >= 16 && columns >= 44;
+  const showStatus = rows >= 23;
+  const inputWidth = Math.max(24, Math.min(columns - 4, 78));
 
   return h(
     Box,
-    { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexGrow: 1 },
-    ...rows,
+    { flexDirection: 'column', flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
+    h(
+      Box,
+      { flexDirection: 'column' },
+      h(
+        Box,
+        { flexDirection: 'column', width: logoWidth },
+        ...logo.map((line, i) => h(Text, { key: i, bold: true, color: 'cyan' }, line)),
+      ),
+      h(Box, { marginTop: 1 }, h(Text, { color: 'gray', dimColor: true }, SUBTITLE)),
+    ),
+    h(Box, { width: inputWidth, marginTop: 2 }, h(InputLine, { store, width: inputWidth })),
+    store.palette
+      ? h(Box, { marginTop: 2 }, h(PaletteOverlay, { store }))
+      : h(
+          Box,
+          { flexDirection: 'column', alignItems: 'center', marginTop: 2 },
+          showShortcuts ? h(ShortcutsRow, { store }) : null,
+          showStatus
+            ? h(
+                Box,
+                { flexDirection: 'column', alignItems: 'center', marginTop: 2 },
+                h(
+                  Box,
+                  { marginBottom: 1 },
+                  h(Text, { color: 'gray', dimColor: true }, symbols().hLine.repeat(Math.max(12, Math.min(columns - 8, 56)))),
+                ),
+                h(StatusRow, { store }),
+              )
+            : null,
+        ),
   );
 }
 
-/** Center the logo lines for the current width. */
-function logoBlock(columns: number): string[] {
-  const lines = logoLines();
-  const width = Math.max(...lines.map((l) => l.length));
-  return lines.map((l) => {
-    const pad = Math.max(0, Math.floor((columns - width) / 2));
-    return ' '.repeat(pad) + l;
-  });
+// ---------------------------------------------------------------------------
+// Command shortcuts (home, secondary UI)
+// ---------------------------------------------------------------------------
+
+const SHORTCUT_ICONS: Record<string, string> = {
+  '/help': '▸',
+  '/status': '◇',
+  '/model': '◈',
+  '/provider': '⚙',
+};
+
+const SHORTCUT_ICONS_ASCII: Record<string, string> = {
+  '/help': '?',
+  '/status': '=',
+  '/model': '*',
+  '/provider': '#',
+};
+
+function iconFor(name: string): string {
+  const table = supportsUnicode() ? SHORTCUT_ICONS : SHORTCUT_ICONS_ASCII;
+  return table[name] ?? '·';
+}
+
+/**
+ * The real commands surfaced under the input. Focusable: Tab focuses the
+ * row, ←/→ selects, Enter runs the command (see app.ts key routing).
+ */
+export function ShortcutsRow({ store }: { store: TuiStore }): ReactNode {
+  const size = useWindowSize();
+  const columns = size.columns ?? 80;
+  const withDescriptions = columns >= 112;
+  const withIcons = columns >= 60;
+  const selected = store.focus === 'shortcuts' ? store.shortcutIndex : -1;
+
+  return h(
+    Box,
+    { flexDirection: 'row', justifyContent: 'center' },
+    ...HOME_SHORTCUTS.map((c, i) => {
+      const active = i === selected;
+      const icon = withIcons ? `${iconFor(c.name)} ` : '';
+      const desc = withDescriptions ? `  ${c.description}` : '';
+      return h(
+        Box,
+        { key: c.name, flexDirection: 'row', marginLeft: i === 0 ? 0 : 3 },
+        h(
+          Text,
+          { color: active ? 'cyan' : 'gray', bold: active, dimColor: !active },
+          `${active ? '› ' : '  '}${icon}${c.name}${desc}`,
+        ),
+      );
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Activity panel
+// Status row (home, quiet)
 // ---------------------------------------------------------------------------
 
-export function ActivityPanel({ store, height }: { store: TuiStore; height?: number }): ReactNode {
-  // The panel sizes itself from the terminal unless the caller pins a height
-  // (tests render with an explicit height). Chrome = header + input + footer.
+/**
+ * One subdued status row with real values only: workspace, model, session
+ * and status. Collapses to a single quiet line on narrow terminals.
+ */
+export function StatusRow({ store }: { store: TuiStore }): ReactNode {
+  const size = useWindowSize();
+  const columns = size.columns ?? 80;
+  const info = store.info;
+  const busy = store.busy;
+  const sym = symbols();
+
+  const model = info.providerAvailable ? (info.model || info.provider || '—') : (info.providerError ?? 'no provider');
+  const status = busy ? 'working' : 'ready';
+  const statusColor = busy ? 'cyan' : 'green';
+
+  if (columns < 70) {
+    // Single quiet line. Shrink the model first; drop it when there is no
+    // room, so the row never wraps on a narrow terminal.
+    const sep = ' · ';
+    const statusText = `${sym.dot} ${status}`;
+    const budget = Math.max(12, columns - 4);
+    const full = `${info.workspace}${sep}${model}${sep}${info.session}${sep}${statusText}`;
+    let shownModel = model;
+    if (full.length > budget) {
+      const room = budget - (full.length - model.length) - sep.length;
+      if (room >= 8) shownModel = fit(model, room);
+      else shownModel = ''; // drop the secondary value entirely
+    }
+    return h(
+      Box,
+      { flexDirection: 'row' },
+      h(
+        Text,
+        { color: 'gray', dimColor: true },
+        [info.workspace, shownModel, info.session].filter(Boolean).join(sep) + `${sep}`,
+      ),
+      h(Text, { color: statusColor }, statusText),
+    );
+  }
+
+  const cols: Array<{ label: string; value: string; color: 'gray' | 'cyan' | 'green' }> = [
+    { label: 'Workspace', value: info.workspace, color: 'gray' },
+    { label: 'Model', value: model, color: 'gray' },
+    { label: 'Session', value: info.session, color: 'gray' },
+    { label: 'Status', value: `${sym.dot} ${status}`, color: statusColor },
+  ];
+  const W = Math.max(12, Math.floor(Math.min(columns - 8, 96) / 4));
+
+  // GRACE FREE quota from the backend (real, best-effort). Quiet, and only on
+  // wide screens — narrow/short terminals collapse it (see /status).
+  const quota = info.freePlan
+    ? h(Box, { marginTop: 1 }, h(Text, { color: 'gray', dimColor: true }, fit(info.freePlan, Math.max(16, columns - 4))))
+    : null;
+
+  return h(
+    Box,
+    { flexDirection: 'column', alignItems: 'center' },
+    h(
+      Box,
+      { flexDirection: 'row' },
+      ...cols.map((c) =>
+        h(Box, { key: c.label, width: W }, h(Text, { color: 'gray', dimColor: true }, c.label)),
+      ),
+    ),
+    h(
+      Box,
+      { flexDirection: 'row', marginTop: 1 },
+      ...cols.map((c) => h(Box, { key: c.label, width: W }, h(Text, { color: c.color }, fit(c.value, W)))),
+    ),
+    quota,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activity feed
+// ---------------------------------------------------------------------------
+
+/**
+ * The live feed. Windowed to the available height, follows the bottom by
+ * default, marks each line by kind. In the app, the latest user line is
+ * rendered by TaskHeader instead (`hideLatestUser`).
+ */
+export function ActivityPanel({ store, height, hideLatestUser }: { store: TuiStore; height?: number; hideLatestUser?: boolean }): ReactNode {
   const size = useWindowSize();
   const termRows = size.rows ?? 24;
-  const chrome = 3 + 3 + (termRows >= 14 ? 3 : 2);
+  const chrome = 9; // task header (5) + input (3) + buffer (1)
   const paletteH = store.palette ? 13 : 0;
   const panelHeight = height ?? Math.max(4, termRows - chrome - paletteH);
-  const inner = Math.max(1, panelHeight - 2); // borders
-  const items = store.items;
+  const inner = Math.max(1, panelHeight - 2);
+  const items = hideLatestUser ? withoutLatestUser(store.items) : store.items;
   const total = items.length;
   const scroll = Math.min(store.scroll, Math.max(0, total - 1));
   const end = Math.max(0, total - scroll);
@@ -233,31 +366,59 @@ export function ActivityPanel({ store, height }: { store: TuiStore; height?: num
     );
   }
 
-  return h(
-    Box,
-    { borderStyle: 'round', borderColor: 'gray', flexGrow: 1, flexDirection: 'column', paddingX: 1, height: panelHeight },
-    ...rows,
-  );
+  return h(Box, { flexDirection: 'column', paddingX: 1, height: panelHeight, flexGrow: 1 }, ...rows);
+}
+
+/** The latest user line is promoted to TaskHeader, so drop it from the feed. */
+function withoutLatestUser(items: ActivityItem[]): ActivityItem[] {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (items[i]?.kind === 'user') return items.filter((_, j) => j !== i);
+  }
+  return items;
 }
 
 function renderItem(item: ActivityItem): ReactNode {
   const style = colorForKind(item.kind);
-  return h(
-    Text,
-    { key: item.id, ...style },
-    item.text,
-  );
+  return h(Text, { key: item.id, ...style }, `${prefixFor(item)}${item.text}`);
+}
+
+/** Kind markers: user ›, progress/info •, tools indented, files +, ✓/✗ marks. */
+function prefixFor(item: ActivityItem): string {
+  const sym = symbols();
+  switch (item.kind) {
+    case 'user':
+      return '› ';
+    case 'progress':
+    case 'info':
+      return '• ';
+    case 'tool':
+      return '  ';
+    case 'file':
+      return '+ ';
+    case 'success':
+      return item.text.trimStart().startsWith(sym.check) ? '' : `${sym.check} `;
+    case 'error':
+      return item.text.trimStart().startsWith(sym.cross) ? '' : `${sym.cross} `;
+    default:
+      return '';
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Input line
 // ---------------------------------------------------------------------------
 
-export function InputLine({ store }: { store: TuiStore }): ReactNode {
+/**
+ * The real input: keyboard editing with a visible cursor, history, and a
+ * mode-aware placeholder. Width can be pinned (home) or full-terminal
+ * (session). The border highlights when the input has focus.
+ */
+export function InputLine({ store, width }: { store: TuiStore; width?: number }): ReactNode {
   const size = useWindowSize();
   const columns = size.columns ?? 80;
-  const inner = Math.max(8, columns - 4); // border + padding
-  const prefix = 'grace> ';
+  const total = width ?? columns;
+  const inner = Math.max(8, total - 4);
+  const prefix = '› ';
   const visible = Math.max(1, inner - prefix.length);
 
   const text = store.input;
@@ -275,7 +436,7 @@ export function InputLine({ store }: { store: TuiStore }): ReactNode {
 
   const content =
     text === '' && !store.busy
-      ? h(Text, { color: 'gray', dimColor: true }, 'Ask me to fix a bug, add a feature, or type / for commands')
+      ? h(Text, { color: 'gray', dimColor: true }, fit(placeholderFor(store), Math.max(8, visible)))
       : h(
           Box,
           { flexDirection: 'row' },
@@ -287,11 +448,17 @@ export function InputLine({ store }: { store: TuiStore }): ReactNode {
   return h(
     Box,
     { borderStyle: 'round', borderColor: store.focus === 'input' ? 'cyan' : 'gray', flexDirection: 'row', paddingX: 1 },
-    h(Text, { bold: true, color: 'cyan' }, 'grace'),
-    h(Text, { color: 'cyan' }, '> '),
+    h(Text, { bold: true, color: 'cyan' }, '›'),
+    h(Text, { color: 'cyan' }, ' '),
     h(Box, { flexGrow: 1 }, content),
     store.busy ? h(Text, { color: 'cyan', dimColor: true }, ' ⏳') : null,
   );
+}
+
+function placeholderFor(store: TuiStore): string {
+  if (store.busy) return 'Grace is working… (Ctrl+C to cancel)';
+  if (store.mode === 'session') return 'What’s next?';
+  return 'Ask me to build, fix, refactor…';
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@
  * All interactive logic (input editing, history, scrolling, overlays) lives
  * here so it is pure, unit-testable and independent of the renderer.
  */
+import { HOME_SHORTCUTS, SLASH_COMMANDS } from './commands.ts';
 import type {
   ActivityItem,
   ActivityKind,
@@ -34,6 +35,8 @@ export class TuiStore {
   /** 'home' shows the branded startup screen; 'session' shows the activity log. */
   mode: 'home' | 'session' = 'home';
   focus: FocusTarget = 'input';
+  /** Selected home-screen shortcut (Tab focuses the row, ←/→ moves). */
+  shortcutIndex = 0;
 
   // -- input -----------------------------------------------------------------
   input = '';
@@ -173,6 +176,7 @@ export class TuiStore {
     this.historyIndex = -1;
     this.input = '';
     this.cursor = 0;
+    this.focus = 'input'; // a submit always lands back in the input
     this.closePalette();
     this.notify();
   }
@@ -257,8 +261,30 @@ export class TuiStore {
     }
   }
 
+  /**
+   * Cycle focus: home = input ⇄ shortcuts, session = input ⇄ activity.
+   * Tab is the only way in; Esc / typing always returns to the input.
+   */
   toggleFocus(): void {
-    this.focus = this.focus === 'input' ? 'activity' : 'input';
+    if (this.mode === 'home') {
+      this.focus = this.focus === 'input' ? 'shortcuts' : 'input';
+    } else {
+      this.focus = this.focus === 'input' ? 'activity' : 'input';
+    }
+    this.notify();
+  }
+
+  setFocus(focus: FocusTarget): void {
+    if (this.focus !== focus) {
+      this.focus = focus;
+      this.notify();
+    }
+  }
+
+  /** Move the shortcut selection (wraps; only meaningful while focused). */
+  shortcutMove(delta: number): void {
+    if (HOME_SHORTCUTS.length === 0) return;
+    this.shortcutIndex = (this.shortcutIndex + delta + HOME_SHORTCUTS.length) % HOME_SHORTCUTS.length;
     this.notify();
   }
 
@@ -355,7 +381,9 @@ export class TuiStore {
   syncPalette(): void {
     if (this.input.startsWith('/') && this.input.length >= 1) {
       if (!this.palette) {
-        this.palette = { commands: [], query: '', selected: 0 };
+        // Load the real command table immediately — the palette lists working
+        // commands from the first keystroke, not after a second keypress.
+        this.palette = { commands: SLASH_COMMANDS, query: '', selected: 0 };
         this.notify();
       }
       this.palette.query = this.input;

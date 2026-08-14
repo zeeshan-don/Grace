@@ -1,17 +1,20 @@
 /**
  * GRACE TUI app (full-screen interface).
  *
- * The single React root: composes the layout (header / activity-or-home /
- * palette / input / footer) and owns ALL keyboard handling. Keys route by
- * what is currently open (permission → picker → login → palette → help →
- * global shortcuts → focus-specific editing), so every interactive element
- * is genuinely wired to the store.
+ * The single React root: composes the layout (home hero OR session feed +
+ * input) and owns ALL keyboard handling. Keys route by what is currently
+ * open (permission → picker → login → palette → help → global shortcuts →
+ * focus-specific editing), so every interactive element is genuinely wired
+ * to the store.
+ *
+ * Layout: the home screen is the full hero (logo → input → shortcuts →
+ * status). After the first task the app switches to the session layout
+ * (slim task header → activity feed → input). No permanent top/bottom bars.
  */
 import { createElement as h, useSyncExternalStore } from 'react';
-import { Box, useApp, useCursor, useInput, useWindowSize } from 'ink';
+import { Box, useCursor, useInput, useWindowSize } from 'ink';
 import {
   ActivityPanel,
-  Footer,
   HelpOverlay,
   HomeScreen,
   InputLine,
@@ -19,9 +22,9 @@ import {
   PaletteOverlay,
   PermissionDialog,
   PickerOverlay,
-  StatusHeader,
+  TaskHeader,
 } from './components.ts';
-import { SLASH_COMMANDS } from './commands.ts';
+import { HOME_SHORTCUTS, SLASH_COMMANDS } from './commands.ts';
 import type { TuiRunner } from './runner.ts';
 import type { TuiStore } from './store.ts';
 
@@ -35,7 +38,6 @@ export function GraceApp({ store, runner, onExit }: AppProps): ReturnType<typeof
   const version = useSyncExternalStore(store.subscribe, store.getVersion, store.getVersion);
   const size = useWindowSize();
   const rows = size.rows ?? 24;
-  const app = useApp();
 
   // Hide the terminal cursor — the input line draws its own block cursor.
   useCursor();
@@ -162,7 +164,27 @@ export function GraceApp({ store, runner, onExit }: AppProps): ReturnType<typeof
       return;
     }
     if (key.escape) {
-      if (store.input) store.clearInput();
+      if (store.focus === 'shortcuts') store.setFocus('input');
+      else if (store.input) store.clearInput();
+      return;
+    }
+
+    // ---------------------------------------------------------------------
+    // 2b. Home shortcut row (focused via Tab)
+    // ---------------------------------------------------------------------
+    if (store.focus === 'shortcuts') {
+      if (key.leftArrow) {
+        store.shortcutMove(-1);
+      } else if (key.rightArrow) {
+        store.shortcutMove(1);
+      } else if (key.return) {
+        const shortcut = HOME_SHORTCUTS[store.shortcutIndex];
+        if (shortcut) submit(shortcut.name);
+      } else if (input && !key.ctrl) {
+        // Typing always returns to the input.
+        store.setFocus('input');
+        store.insert(input);
+      }
       return;
     }
 
@@ -236,23 +258,32 @@ export function GraceApp({ store, runner, onExit }: AppProps): ReturnType<typeof
   const hasActivity = store.items.length > 0;
   const showHome = store.mode === 'home' && !hasActivity && !store.busy;
 
+  const paletteH = store.palette ? 13 : 0;
+  const panelHeight = Math.max(4, rows - 8 - paletteH);
+
   let middle: ReturnType<typeof h>;
   if (store.permission) middle = h(PermissionDialog, { store });
   else if (store.picker) middle = h(PickerOverlay, { store });
   else if (store.login) middle = h(LoginOverlay, { store });
   else if (store.helpOpen) middle = h(HelpOverlay, { store });
   else if (showHome) middle = h(HomeScreen, { store });
-  else middle = h(ActivityPanel, { store });
+  else middle = h(ActivityPanel, { store, hideLatestUser: true, height: panelHeight });
 
-  const palette = store.palette ? h(PaletteOverlay, { store }) : null;
+  const palette = store.palette && !showHome ? h(PaletteOverlay, { store }) : null;
 
+  if (showHome) {
+    // Home is the full hero: logo → input → shortcuts → status, plus the
+    // palette in place of the shortcuts while typing a slash command.
+    return h(Box, { flexDirection: 'column', height: rows }, middle);
+  }
+
+  // Session: slim task header, live feed, input. No permanent bars.
   return h(
     Box,
     { flexDirection: 'column', height: rows },
-    h(StatusHeader, { store }),
-    h(Box, { flexGrow: 1, flexDirection: 'column', justifyContent: showHome ? 'center' : 'flex-start' }, middle),
+    h(TaskHeader, { store }),
+    middle,
     palette,
     h(InputLine, { store }),
-    h(Footer, { store }),
   );
 }

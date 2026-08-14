@@ -192,7 +192,8 @@ test('interactive: typing renders in the input, Enter submits a real task', asyn
   await tick();
 
   const first = plain(term.flush());
-  assert.match(first, /GRACE/, 'header shows the wordmark');
+  assert.match(first, /██████╗/, 'home shows the GRACE logo from GRACE_logo.txt');
+  assert.match(first, /A I\s+C O D I N G\s+A G E N T/, 'home shows the muted subtitle under the logo');
   assert.match(first, /C:\\work\\app/, 'workspace is real');
 
   await type(term, 'fix the login bug');
@@ -308,6 +309,34 @@ test('interactive: Ctrl+L clears activity, Esc clears input, Ctrl+C exits', asyn
   term.press(KEYS.ctrlC);
   await tick();
   assert.equal(exited, 1, 'Ctrl+C requested exit');
+});
+
+test('interactive: home shortcuts focus via Tab, arrows select, Enter runs the real command', async () => {
+  const store = freshStore();
+  const term = makeTerminal();
+  const stub = makeStubRunner(store);
+  boot(term, store, stub.runner);
+  term.flush();
+
+  // Tab focuses the shortcut row (/help), → selects /status, Enter runs it.
+  term.press(KEYS.tab);
+  await tick();
+  term.press(KEYS.right);
+  await tick();
+  term.press(KEYS.enter);
+  await tick();
+
+  assert.ok(
+    stub.calls.some((c) => c.type === 'slash' && c.text === '/status'),
+    'Enter executed the selected shortcut as a real slash command',
+  );
+
+  // Typing while the row is focused returns to the input and inserts.
+  store.clearActivity();
+  term.press(KEYS.tab);
+  await tick();
+  await type(term, 'fix auth');
+  assert.equal(store.input, 'fix auth', 'typing from the shortcut row lands in the input');
 });
 
 test('interactive: the palette command table is complete and real', () => {

@@ -102,8 +102,8 @@ export interface LoginState {
   busy: boolean;
 }
 
-/** Focus target — Tab toggles between editing and scrolling. */
-export type FocusTarget = 'input' | 'activity';
+/** Focus target — Tab cycles: input → shortcuts (home) / activity (session). */
+export type FocusTarget = 'input' | 'shortcuts' | 'activity';
 
 /** Picker kinds. */
 export type PickerKind = 'model' | 'provider';

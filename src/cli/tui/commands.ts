@@ -1,10 +1,29 @@
 /**
- * Slash command definitions (TUI command palette).
+ * Slash command definitions (TUI command palette + home-screen shortcuts).
  *
- * Every entry maps to a REAL, working command — the palette is a shortcut for
- * typing the same slash command into the input. No dummy suggestions.
+ * Every entry maps to a REAL, working command — the palette and the home
+ * shortcuts are shortcuts for typing the same slash command into the input.
+ * No dummy suggestions.
  */
 import type { SlashCommandDef } from './types.ts';
+
+/**
+ * The small set of REAL commands surfaced on the startup screen. Each one
+ * executes the actual command when activated (Tab to focus, ←/→ to select,
+ * Enter to run). /settings does not exist in GRACE, so the preferences spot
+ * is filled by /provider — a real, working command.
+ */
+export interface HomeShortcut {
+  name: string;
+  description: string;
+}
+
+export const HOME_SHORTCUTS: HomeShortcut[] = [
+  { name: '/help', description: 'Show commands' },
+  { name: '/status', description: 'Workspace & session' },
+  { name: '/model', description: 'Switch model' },
+  { name: '/provider', description: 'Switch provider' },
+];
 
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: '/help', usage: '/help', description: 'Show commands' },

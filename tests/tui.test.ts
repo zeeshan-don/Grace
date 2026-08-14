@@ -280,13 +280,22 @@ test('models: providers list is empty when nothing is configured', () => {
 // Render smoke tests (renderToString — no terminal needed)
 // ---------------------------------------------------------------------------
 
-test('render: home screen shows the wordmark, workspace and session', () => {
+test('render: home screen shows the logo, subtitle, workspace, model and session', () => {
   const s = new TuiStore(info());
   const out = renderToString(h(HomeScreen, { store: s }), { columns: 80 });
-  assert.match(out, /AI Coding Agent/);
-  assert.match(out, /C:\\work\\app/);
-  assert.match(out, /Local mode/);
-  assert.match(out, /NVIDIA NIM/);
+  // The GRACE logo from GRACE_logo.txt — first row and last row both render.
+  assert.match(out, /██████╗/, 'the GRACE logo from GRACE_logo.txt renders');
+  assert.match(out, /╚══════╝/, 'the last logo row renders');
+  assert.match(out, /A I\s+C O D I N G\s+A G E N T/, 'muted subtitle under the logo');
+  assert.match(out, /C:\\work\\app/, 'real workspace in the status row');
+  assert.match(out, /Local mode/, 'real session in the status row');
+  assert.match(out, /qwen\/qwen2\.5-code/, 'real model in the status row');
+});
+
+test('render: home status row shows the real free-plan quota when present', () => {
+  const s = new TuiStore(info({ freePlan: 'Quota · Session 2/6 · 45m left · 1h used today' }));
+  const out = renderToString(h(HomeScreen, { store: s }), { columns: 80 });
+  assert.match(out, /Quota · Session 2\/6 · 45m left/, 'real quota line under the status row');
 });
 
 test('render: activity panel shows pushed lines and respects the height', () => {
@@ -302,9 +311,9 @@ test('render: activity panel shows pushed lines and respects the height', () => 
 test('render: input line shows the typed text and a placeholder when empty', () => {
   const s = new TuiStore(info());
   let out = renderToString(h(InputLine, { store: s }), { columns: 60 });
-  assert.match(out, /Ask me to fix a bug/);
+  assert.match(out, /Ask me to build/);
   s.insert('fix the login');
   out = renderToString(h(InputLine, { store: s }), { columns: 60 });
   assert.match(out, /fix the login/);
-  assert.match(out, /grace/);
+  assert.match(out, /›/, 'the input prompt is a chevron, not a fake box');
 });
