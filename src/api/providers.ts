@@ -8,11 +8,11 @@
  * `AIProvider` abstraction untouched (src/providers).
  *
  * Routing (the server-side Model Router, src/agents/modelRouter.ts):
- *   - coding / reasoning / review → NVIDIA primary, Groq fallback
- *   - fast tasks                  → Groq primary, NVIDIA fallback
- * The chain is wrapped in a FallbackProvider, so a failing primary (rate
- * limit, timeout, model unavailable, network, …) safely falls back to the
- * next provider at the model-request boundary — never mid-tool.
+ *   Groq → NVIDIA NIM → Gemini → MiniMax (per tier; reorderable via
+ *   ZEESH_SERVER_ROUTING). The chain is wrapped in a FallbackProvider, so a
+ * failing provider (rate limit, quota exhausted, timeout, model unavailable,
+ * server error, network, …) safely falls back to the next one at the
+ * model-request boundary — never mid-tool.
  *
  * Model availability: each provider's model is resolved against its own live
  * catalog (cached 5 min). A requested model the provider no longer serves
@@ -39,9 +39,29 @@ export type ServerProviderResult = ServerProvider | ServerProviderError;
 
 /** Server-side env var that holds the API key for each provider id. */
 const PROVIDER_ENV: Record<string, string> = {
-  nvidia: 'NVIDIA_API_KEY',
   groq: 'GROQ_API_KEY',
+  nvidia: 'NVIDIA_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+  minimax: 'MINIMAX_API_KEY',
 };
+
+/**
+ * The provider chain that WILL be attempted for a request: preference order,
+ * filtered to providers with a configured server-side key, with each leg's
+ * resolved model. Used by the cost guard to estimate worst-case spend before
+ * any request is sent.
+ */
+export function configuredProviderChain(model: string | undefined, tier?: ModelTier): Array<{ provider: string; model: string }> {
+  const out: Array<{ provider: string; model: string }> = [];
+  for (const providerId of serverRoutingPreference(tier)) {
+    const envName = PROVIDER_ENV[providerId];
+    const apiKey = envName ? process.env[envName]?.trim() : undefined;
+    if (!apiKey) continue;
+    out.push({ provider: providerId, model: resolveModelForProvider(providerId, model, tier ?? 'coding') });
+  }
+  return out;
+}
 
 /**
  * Build a provider for the server using the server-side key.
@@ -77,8 +97,8 @@ export function resolveModelForProvider(providerId: string, requested: string | 
  * Providers are included in preference order (per tier), each only when its
  * server-side key is configured:
  *
- *   coding/reasoning/review → NVIDIA (primary) → Groq (fallback)
- *   fast                    → Groq (primary)  → NVIDIA (fallback)
+ *   Groq → NVIDIA NIM → Gemini → MiniMax   (see src/agents/modelRouter.ts;
+ *   reorderable per deployment via ZEESH_SERVER_ROUTING)
  *
  * With a single key the chain is that one provider (Groq-only deployments
  * behave exactly as before). With none, the API refuses with a clear error.
@@ -93,7 +113,10 @@ export function createServerRouter(model?: string, tier?: ModelTier, perProvider
     chain.push(createProvider(providerId, { apiKey, model: providerModel }));
   }
   if (chain.length === 0) {
-    return { error: 'No server-side AI provider key is configured (set NVIDIA_API_KEY and/or GROQ_API_KEY).' };
+    return {
+      error:
+        'No server-side AI provider key is configured (set GROQ_API_KEY, NVIDIA_API_KEY, GEMINI_API_KEY and/or MINIMAX_API_KEY).',
+    };
   }
   try {
     return { provider: chain.length === 1 ? (chain[0] as AIProvider) : new FallbackProvider(chain) };
@@ -179,6 +202,8 @@ export interface ChatOk {
   /** Provider that actually served the request (after fallback). */
   providerId: string;
   providerLabel: string;
+  /** Model that actually served the request (used for cost accounting). */
+  model: string;
 }
 
 export interface ChatFail {
@@ -222,7 +247,13 @@ export async function runServerChat(req: ChatRequest): Promise<ChatOutcome> {
       model: req.model,
       detail: `served_by=${served?.id ?? 'unknown'}${req.tier ? ` tier=${req.tier}` : ''}`,
     });
-    return { ok: true, result, providerId: served?.id ?? 'unknown', providerLabel: served?.label ?? 'AI provider' };
+    return {
+      ok: true,
+      result,
+      providerId: served?.id ?? 'unknown',
+      providerLabel: served?.label ?? 'AI provider',
+      model: served?.getModel().id ?? req.model ?? 'unknown',
+    };
   } catch (err) {
     // The detailed (sanitized) reason goes to the server log for ops; the
     // client gets a categorized, key-free message so nothing sensitive ever

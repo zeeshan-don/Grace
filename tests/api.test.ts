@@ -27,8 +27,15 @@ afterEach(() => {
   delete process.env.DATABASE_URL;
   delete process.env.GROQ_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   delete process.env.ZEESH_AUTH_RATE_LIMIT_MAX;
   delete process.env.ZEESH_API_RATE_LIMIT_MAX;
+  delete process.env.ZEESH_DAILY_COST_LIMIT_INR;
+  delete process.env.ZEESH_INR_PER_USD;
+  delete process.env.ZEESH_GLOBAL_DAILY_COST_LIMIT_INR;
+  delete process.env.ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR;
   setDbForTests(null);
   resetRateLimiters();
 });
@@ -515,8 +522,12 @@ test('runServerChat forwards tools to the provider options (agent tool calls wor
 });
 
 test('POST /api/provider refuses when no server key is configured', async () => {
+  // All provider keys must be gone — this environment carries real .env keys.
   delete process.env.GROQ_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   const mem = createMemoryDb();
   setDbForTests(mem.db);
   const { server, baseUrl } = await startServer();
@@ -535,9 +546,12 @@ test('POST /api/provider refuses when no server key is configured', async () => 
   }
 });
 
-test('POST /api/provider falls back NVIDIA → Groq and reports the serving provider', async () => {
+test('POST /api/provider falls back Groq → NVIDIA and reports the serving provider', async () => {
   process.env.NVIDIA_API_KEY = 'nvapi_fake_key_for_tests';
   process.env.GROQ_API_KEY = 'gsk_fake_key_for_tests';
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   const mem = createMemoryDb();
   setDbForTests(mem.db);
   const { server, baseUrl } = await startServer();

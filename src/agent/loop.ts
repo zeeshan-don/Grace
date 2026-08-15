@@ -163,6 +163,7 @@ export class AgentLoop {
           inputTokens: usage.inputTokens + streamUsage.inputTokens,
           outputTokens: usage.outputTokens + streamUsage.outputTokens,
           totalTokens: usage.totalTokens + streamUsage.totalTokens,
+          cachedInputTokens: (usage.cachedInputTokens ?? 0) + (streamUsage.cachedInputTokens ?? 0),
         };
       }
 

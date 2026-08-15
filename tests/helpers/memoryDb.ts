@@ -53,6 +53,35 @@ export interface MemFreeSession {
   ended_at: string | null;
 }
 
+export interface MemDailyCost {
+  user_id: string;
+  day: string;
+  spent: number;
+  reserved: number;
+  version: number;
+}
+
+export interface MemGlobalCost {
+  period_type: string;
+  period: string;
+  spent: number;
+  reserved: number;
+  version: number;
+}
+
+export interface MemAiUsage {
+  user_id: string;
+  session_id: string | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd_micros: number;
+  day: string;
+}
+
 export interface MemoryDb {
   db: Db;
   users: MemUser[];
@@ -60,6 +89,9 @@ export interface MemoryDb {
   runs: MemRun[];
   usageRows: MemUsageRow[];
   freeSessions: MemFreeSession[];
+  dailyCosts: MemDailyCost[];
+  globalCosts: MemGlobalCost[];
+  aiUsage: MemAiUsage[];
 }
 
 /** Create a fresh in-memory database. */
@@ -70,6 +102,9 @@ export function createMemoryDb(): MemoryDb {
   const runs: MemRun[] = [];
   const usageRows: MemUsageRow[] = [];
   const freeSessions: MemFreeSession[] = [];
+  const dailyCosts: MemDailyCost[] = [];
+  const globalCosts: MemGlobalCost[] = [];
+  const aiUsage: MemAiUsage[] = [];
 
   const db: Db = async (sql, params: unknown[] = []) => {
     // Health probe.
@@ -231,8 +266,94 @@ export function createMemoryDb(): MemoryDb {
       return [];
     }
 
+    // ---- CostGuardService (cost accounting) --------------------------------
+    // Reserve: INSERT ... ON CONFLICT (user_id, day) DO UPDATE ... WHERE
+    //   spent + reserved + new <= cap. Mirrors the atomic Postgres semantics:
+    //   the WHERE clause is re-checked under the (single-threaded) write, so
+    //   concurrent requests can never overshoot the ceiling.
+    if (sql.includes('INSERT INTO daily_cost')) {
+      const [userId, day, micros, capMicros] = params as [string, string, number, number];
+      const row = dailyCosts.find((r) => r.user_id === userId && r.day === day);
+      if (row) {
+        if (row.spent + row.reserved + micros > capMicros) return []; // WHERE false → no row
+        row.reserved += micros;
+        row.version += 1;
+        return [{ user_id: userId }];
+      }
+      dailyCosts.push({ user_id: userId, day, spent: 0, reserved: micros, version: 1 });
+      return [{ user_id: userId }];
+    }
+    if (sql.includes('UPDATE daily_cost')) {
+      // Settle passes 4 params [user, day, spentDelta, reservedDelta]; the
+      // release path passes 3 [user, day, reservedDelta].
+      const [userId, day] = params as [string, string];
+      const isSettle = params.length >= 4;
+      const spentDelta = isSettle ? (params[2] as number) : 0;
+      const reservedDelta = (isSettle ? (params[3] as number) : (params[2] as number)) ?? 0;
+      const row = dailyCosts.find((r) => r.user_id === userId && r.day === day);
+      if (row) {
+        row.spent += spentDelta;
+        row.reserved = Math.max(0, row.reserved - reservedDelta);
+        row.version += 1;
+      }
+      return [];
+    }
+    if (sql.includes('FROM daily_cost')) {
+      const [userId, day] = params as [string, string];
+      const row = dailyCosts.find((r) => r.user_id === userId && r.day === day);
+      return row ? [{ spent_usd_micros: row.spent, reserved_usd_micros: row.reserved }] : [];
+    }
+    if (sql.includes('INSERT INTO global_cost')) {
+      const [periodType, period, micros, capMicros] = params as [string, string, number, number];
+      const row = globalCosts.find((r) => r.period_type === periodType && r.period === period);
+      if (row) {
+        if (row.spent + row.reserved + micros > capMicros) return [];
+        row.reserved += micros;
+        row.version += 1;
+        return [{ period_type: periodType }];
+      }
+      globalCosts.push({ period_type: periodType, period, spent: 0, reserved: micros, version: 1 });
+      return [{ period_type: periodType }];
+    }
+    if (sql.includes('UPDATE global_cost')) {
+      const [periodType, period] = params as [string, string];
+      const isSettle = params.length >= 4;
+      const spentDelta = isSettle ? (params[2] as number) : 0;
+      const reservedDelta = (isSettle ? (params[3] as number) : (params[2] as number)) ?? 0;
+      const row = globalCosts.find((r) => r.period_type === periodType && r.period === period);
+      if (row) {
+        row.spent += spentDelta;
+        row.reserved = Math.max(0, row.reserved - reservedDelta);
+        row.version += 1;
+      }
+      return [];
+    }
+    if (sql.includes('FROM global_cost')) {
+      const [periodType, period] = params as [string, string];
+      const row = globalCosts.find((r) => r.period_type === periodType && r.period === period);
+      return row ? [{ spent_usd_micros: row.spent, reserved_usd_micros: row.reserved }] : [];
+    }
+    if (sql.includes('INSERT INTO ai_usage')) {
+      const [userId, sessionId, provider, model, input, cached, output, total, cost, day] = params as [
+        string, string | null, string, string, number, number, number, number, number, string,
+      ];
+      aiUsage.push({
+        user_id: userId,
+        session_id: sessionId,
+        provider,
+        model,
+        input_tokens: input,
+        cached_input_tokens: cached,
+        output_tokens: output,
+        total_tokens: total,
+        estimated_cost_usd_micros: cost,
+        day,
+      });
+      return [];
+    }
+
     throw new Error(`MemoryDb: unhandled query: ${sql}`);
   };
 
-  return { db, users, sessions, runs, usageRows, freeSessions };
+  return { db, users, sessions, runs, usageRows, freeSessions, dailyCosts, globalCosts, aiUsage };
 }

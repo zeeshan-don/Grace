@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
  * "user preferred" default shown in /model list.
  */
 export const DEFAULT_MODELS = [
-  'qwen/qwen2.5-coder-32b-instruct',
+  'openai/gpt-oss-20b',
   'openai/gpt-oss-120b',
   'llama-3.3-70b-versatile',
 ] as const;

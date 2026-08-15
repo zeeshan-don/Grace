@@ -18,18 +18,24 @@ export const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 
 /**
  * Default model: one NVIDIA-hosted, coding-capable model (build.nvidia.com
- * catalog). Qwen2.5-Coder 32B Instruct is a code model with native OpenAI-style
- * function calling, which the agent loop relies on.
+ * catalog). GPT-OSS 20B is a strong code model with native OpenAI-style
+ * function calling (which the agent loop relies on) and fast inference.
+ *
+ * NOTE: the older defaults (`qwen/qwen2.5-coder-32b-instruct`,
+ * `deepseek-ai/deepseek-r1`) reached end-of-life on NVIDIA and now return
+ * HTTP 410, which is why they were replaced. Set `NVIDIA_MODEL` to override.
  */
-export const DEFAULT_NVIDIA_MODEL = 'qwen/qwen2.5-coder-32b-instruct';
+export const DEFAULT_NVIDIA_MODEL = 'openai/gpt-oss-20b';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_CONTEXT = 131_072;
 
 /** Context windows for models we ship defaults for (documented NVIDIA NIM models). */
 const KNOWN_CONTEXTS: Record<string, number> = {
-  'qwen/qwen2.5-coder-32b-instruct': 131_072,
-  'deepseek-ai/deepseek-r1': 131_072,
+  'openai/gpt-oss-20b': 131_072,
+  'openai/gpt-oss-120b': 131_072,
+  'nvidia/llama-3.3-nemotron-super-49b-v1.5': 131_072,
+  'z-ai/glm-5.2': 131_072,
 };
 
 /** OpenAI-compatible chat completion response (the fields we consume). */
@@ -43,6 +49,9 @@ interface NvidiaChatResponse {
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   error?: { message?: string; type?: string; code?: string };
+  // NVIDIA problem-details shape (used for model rejection, e.g. 410 Gone).
+  title?: string;
+  detail?: string;
 }
 
 interface NvidiaToolCall {
@@ -79,13 +88,21 @@ function toUsage(u: NvidiaChatResponse['usage']): Usage | undefined {
   return { inputTokens, outputTokens, totalTokens: u.total_tokens ?? inputTokens + outputTokens };
 }
 
-/** Classify a failed HTTP response (status + parsed body) into a category. */
+/**
+ * Classify a failed HTTP response (status + parsed body) into a category.
+ *
+ * NVIDIA returns two error shapes: OpenAI-style `{ error: { message } }` and
+ * problem-details `{ type, title, status, detail }` (used for 4xx rejections
+ * such as 404/410 model-not-found). Both are handled here.
+ */
 function classifyFailure(status: number, data: NvidiaChatResponse | null): ProviderError['category'] {
   if (status === 401 || status === 403) return 'authentication';
   if (status === 429) return 'rate_limit';
   if (status === 408) return 'timeout';
-  const msg = data?.error?.message ?? '';
-  if (status === 404 || /model[^.]*(not found|does not exist|unavailable)|not.*support/i.test(msg)) {
+  const msg = data?.error?.message ?? data?.title ?? '';
+  // 410 Gone = model decommissioned / reached end of life → treat as unavailable.
+  if (status === 404 || status === 410) return 'unavailable_model';
+  if (/model[^.]*(not found|does not exist|unavailable|end of life)|not.*support/i.test(msg)) {
     return 'unavailable_model';
   }
   if (status >= 500) return 'unavailable_model'; // provider-side outage → fallback
@@ -201,7 +218,9 @@ export class NvidiaProvider implements AIProvider {
     if (!res.ok) {
       // Scrub provider text: it must never carry a key (defense in depth —
       // even a misbehaving provider cannot leak credentials downstream).
-      const detail = scrub(data?.error?.message ?? '');
+      // Handle both OpenAI-style errors and NVIDIA problem-details payloads.
+      const raw = data?.error?.message ?? data?.detail ?? data?.title ?? '';
+      const detail = scrub(String(raw));
       throw new ProviderError(this.id, classifyFailure(res.status, data), detail || 'NVIDIA NIM request failed.', res.status);
     }
     if (!data) {

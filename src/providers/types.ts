@@ -39,6 +39,8 @@ export interface Usage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** Cached/context input tokens (reported by providers that expose them). */
+  cachedInputTokens?: number;
 }
 
 export interface ModelInfo {

@@ -24,23 +24,23 @@ test('banner: renders GRACE with provider/model and no ZEESH branding', () => {
   const out = renderBanner({
     directory: 'D:\\work\\app',
     provider: 'NVIDIA NIM',
-    model: 'qwen/qwen2.5-coder-32b-instruct',
+    model: 'openai/gpt-oss-20b',
     session: 'logged in as dev@example.com',
     freePlan: 'Quota · 5 sessions remaining',
   });
   assert.match(out, /GRACE/);
   assert.match(out, /AI Coding Agent · v0\.1\.0/);
   assert.match(out, /NVIDIA NIM/);
-  assert.match(out, /qwen\/qwen2\.5-coder-32b-instruct/);
+  assert.match(out, /gpt-oss-20b/);
   assert.match(out, /Quota/);
   assert.match(out, /Type \/help for commands\./);
   assert.ok(!/ZEESH/i.test(out), 'no ZEESH branding in the banner');
 });
 
 test('default model is NVIDIA-first, not a Groq-only model', () => {
-  assert.equal(DEFAULT_MODELS[0], DEFAULT_NVIDIA_MODEL, 'the default model is NVIDIA-served qwen2.5-coder');
+  assert.equal(DEFAULT_MODELS[0], DEFAULT_NVIDIA_MODEL, 'the default model is NVIDIA-served gpt-oss-20b');
   assert.ok(
-    !DEFAULT_MODELS[0]!.startsWith('openai/') && !DEFAULT_MODELS[0]!.startsWith('llama-'),
+    !DEFAULT_MODELS[0]!.startsWith('llama-'),
     'the default is not a Groq-only id',
   );
 });

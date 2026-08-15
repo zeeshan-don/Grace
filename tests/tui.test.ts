@@ -37,7 +37,7 @@ function info(overrides: Partial<TuiInfo> = {}): TuiInfo {
     workspace: 'C:\\work\\app',
     provider: 'NVIDIA NIM',
     providerAvailable: true,
-    model: 'qwen/qwen2.5-coder-32b-instruct',
+    model: 'openai/gpt-oss-20b',
     session: 'Local mode',
     ...overrides,
   };
@@ -289,7 +289,7 @@ test('render: home screen shows the logo, subtitle, workspace, model and session
   assert.match(out, /A I\s+C O D I N G\s+A G E N T/, 'muted subtitle under the logo');
   assert.match(out, /C:\\work\\app/, 'real workspace in the status row');
   assert.match(out, /Local mode/, 'real session in the status row');
-  assert.match(out, /qwen\/qwen2\.5-code/, 'real model in the status row');
+  assert.match(out, /gpt-oss-20b/, 'real model in the status row');
 });
 
 test('render: home status row shows the real free-plan quota when present', () => {

@@ -10,9 +10,9 @@ logs in (`grace login`) it reports usage through the API.
 
 - **Prove economics**: compute AI cost per user, infra cost per user, ad
   revenue per user, and profit/loss per user.
-- **Never expose provider keys to clients**: the backend owns
-  `NVIDIA_API_KEY` (primary) and `GROQ_API_KEY` (fallback) and proxies model
-  calls through the Model Router (`src/api/providers.ts`).
+- **Never expose provider keys to clients**: the backend owns all provider
+  keys (`GROQ_API_KEY`, `NVIDIA_API_KEY`, `GEMINI_API_KEY`, `MINIMAX_API_KEY`)
+  and proxies model calls through the Model Router (`src/api/providers.ts`).
 - **Track every agent turn** so per-user cost is auditable.
 - **Never store plaintext credentials**: passwords are scrypt-hashed
   (`users.password_hash`), session tokens are stored as SHA-256 only
@@ -28,6 +28,7 @@ psql "$DATABASE_URL" -f db/migrations/001_init.sql
 psql "$DATABASE_URL" -f db/migrations/002_auth.sql
 psql "$DATABASE_URL" -f db/migrations/003_closed_beta.sql
 psql "$DATABASE_URL" -f db/migrations/004_free_sessions.sql
+psql "$DATABASE_URL" -f db/migrations/005_cost_guard.sql
 ```
 
 or paste each file into the **Neon SQL Editor** (console.neon.tech → SQL
@@ -47,7 +48,8 @@ Get a database:
 | `001_init.sql` | 10 | `users`, `sessions`, `agent_runs`, `usage`, `models`, `user_economics` view |
 | `002_auth.sql` | 11 | `users.password_hash`, indexes on `sessions.token_hash` and `(user_id, expires_at)` |
 | `003_closed_beta.sql` | 12 | `users.is_beta`, timestamp indexes (`agent_runs/usage/users.created_at`, `sessions.expires_at`) |
-| `004_free_sessions.sql` | 13 | `free_sessions` (GRACE FREE daily session quota: 6 sessions/day × 60 min, unique per user/day/number) |
+| `004_free_sessions.sql` | 13 | `free_sessions` (GRACE FREE daily session quota: 3 sessions/day × 60 min, unique per user/day/number) |
+| `005_cost_guard.sql` | 18 | `ai_usage` (per-request cost ledger), `daily_cost` (per-user/day spent+reserved microdollar ledger), `global_cost` (cross-user circuit breaker ledger) |
 
 ## Schema
 
@@ -60,6 +62,9 @@ Get a database:
 | `models` | Model catalog with placeholder pricing per 1M tokens |
 | `user_economics` | View: runs, total tokens and estimated AI cost per user |
 | `free_sessions` | GRACE FREE quota rows — one per daily session (`day` = UTC date, `session_number` 1..N, `started_at`, `expires_at`, `ended_at`) |
+| `ai_usage` | One row per hosted model request: provider, model, input/cached/output tokens, `estimated_cost_usd_micros` (integer microdollars), UTC `day` — internal economics, never shown to users |
+| `daily_cost` | Per-user, per-UTC-day cost ledger (`spent_usd_micros`, `reserved_usd_micros`, `version`) — the ₹20/day ceiling is enforced here with atomic reservations |
+| `global_cost` | Cross-user circuit breaker ledger, keyed by `(period_type, period)` = `('day', YYYY-MM-DD)` / `('month', YYYY-MM)` |
 
 `agent_runs` + `usage` together track everything the milestones require:
 
@@ -93,7 +98,7 @@ CLI ──POST /api/usage (Bearer token)──► Backend ──► Neon: agent_
 
 ```
 CLI ──POST /api/usage──► Backend ──► Neon: agent_runs + usage rows
-CLI ──POST /api/provider──► Backend ──► Model router (NVIDIA NIM → Groq fallback) ──► AI provider (key stays server-side)
+CLI ──POST /api/provider──► Backend ──► Cost guard (reserve ₹ budget, cap max output) ──► Free-session gate ──► Model router (Groq → NVIDIA → Gemini → MiniMax) ──► AI provider (key stays server-side) ──► settle actual cost + record ai_usage
 ```
 
 The CLI keeps working offline (local key) while the backend path adds accounts,
@@ -112,6 +117,26 @@ non-fatal — a backend outage never breaks the local agent.
   time-series/observability queries. Lookups by `user_id`, session token hash
   and `client_run_id` were already indexed (see the migration header for the
   full checklist).
+
+## Cost guard (Milestone 18)
+
+The internal ₹20/day/user ceiling and the global circuit breaker live in
+`005_cost_guard.sql`, written only by `src/api/costGuard.ts`:
+
+- **Money is integer microdollars** (`BIGINT`) — never floats. Prices come
+  from the centralized registry (`src/costs/pricing.ts`, overridable via
+  `ZEESH_PRICING_JSON`); the INR ceiling is converted with
+  `ZEESH_INR_PER_USD` (default 83).
+- **Reservations are race-safe**: before a paid request the server runs
+  `INSERT … ON CONFLICT (user_id, day) DO UPDATE SET reserved += $x WHERE
+  spent + reserved + $x <= cap RETURNING …`. The WHERE clause re-checks the
+  ceiling under the row lock, so concurrent requests (multiple Grace
+  processes, parallel agents) can never push a user over the cap. The global
+  breaker uses the same pattern on `global_cost` (daily + monthly periods).
+- **Settle releases unused budget**: after the request the actual cost is
+  settled (`spent += actual`, `reserved -= reserved`) and one `ai_usage` row
+  records provider, model, tokens and estimated cost. Failed requests release
+  the whole reservation.
 
 ## Free plan sessions (Milestone 13)
 

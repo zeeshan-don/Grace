@@ -89,7 +89,7 @@ export function discoverProviders(runtime: Runtime): PickerOption[] {
     opts.push({
       value: 'backend',
       label: 'GRACE backend',
-      hint: 'NVIDIA NIM + Groq fallback · server-side keys',
+      hint: 'Groq → NVIDIA → Gemini → MiniMax · server-side keys',
       current: runtime.provider?.id === 'remote',
     });
   }

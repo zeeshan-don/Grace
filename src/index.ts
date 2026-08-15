@@ -123,7 +123,7 @@ function usage(): string {
     '  grace whoami                     Show the authenticated identity',
     '',
     'Options:',
-    '  --model <id>     Override the model (e.g. qwen/qwen2.5-coder-32b-instruct)',
+    '  --model <id>     Override the model (e.g. openai/gpt-oss-20b)',
     '  --yes, -y        Auto-approve flagged commands (dangerous!)',
     '  --new-window     Start Grace in a new terminal window (workspace preserved)',
     '  --verbose        Show verbose diagnostics (raw output, agent details)',

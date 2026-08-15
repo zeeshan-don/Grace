@@ -18,6 +18,7 @@ import { getDb } from './db.ts';
 import { logApiEvent } from './log.ts';
 import { checkRateLimit, clientIp } from './rateLimit.ts';
 import { describeServerRouter, runServerChat, type ChatRequest } from './providers.ts';
+import { CostGuardService } from './costGuard.ts';
 import { FreeSessionService, secondsUntilUtcMidnight, type DailySessionState, type FreeSessionRow } from './freeSessions.ts';
 import { isObject, methodNotAllowed, type ApiHandler, type ApiRequest, type ApiResponse } from './types.ts';
 import { UsageError, UsageService, type UsageReport } from './usage.ts';
@@ -299,20 +300,58 @@ export const providerHandler: ApiHandler = async (req, res) => {
     return res.status(400).json({ error: '"messages" must be a non-empty array.' });
   }
 
+  // GRACE FREE internal cost guard (Milestone 18): the per-user daily cost
+  // ceiling (₹20/day) and the global circuit breaker are enforced BEFORE any
+  // provider call AND before the session gate, so a refused request never
+  // consumes a session slot. The guard reserves worst-case budget, bounds max
+  // output tokens to what the remaining budget allows, and settles afterwards.
+  const svc = new FreeSessionService(db);
+  const costGuard = new CostGuardService(db);
+  const sessionId = (await svc.lastSessionRow(auth.user.id))?.id ?? null;
+  const costGate = await costGuard.guardChat(auth.user.id, chatRequest, sessionId);
+  if (!costGate.ok) {
+    if (costGate.retryAfterSeconds !== undefined) res.setHeader('Retry-After', String(costGate.retryAfterSeconds));
+    return res.status(costGate.status).json({
+      error: costGate.error,
+      code: costGate.code,
+      // Read-only session state rides along so the CLI still renders the quota.
+      session: await svc.getState(auth.user.id),
+    });
+  }
+
   // GRACE FREE (Milestone 13): the free-plan gate is authoritative and runs
   // BEFORE any provider call, so exhausted/expired accounts never reach the
   // model. An expired session with quota left auto-starts the next one; the
   // response tells the CLI a new session began (session.startedNew).
-  const gate = await new FreeSessionService(db).ensureActiveSession(auth.user.id);
+  const gate = await svc.ensureActiveSession(auth.user.id);
   if (!gate.ok) {
-    // "All N sessions used" — Retry-After hints at the next UTC day, and the
-    // current state rides along so the rejection is self-describing.
+    // "All N sessions used" — release the reserved budget (no inference
+    // happened) and hint Retry-After at the next UTC day.
+    await costGuard.settle(costGate.reservation, null);
     res.setHeader('Retry-After', String(secondsUntilUtcMidnight()));
     return res.status(gate.status).json({ error: gate.error, code: gate.code, session: gate.state });
   }
 
+  // Bound max output tokens to the reserved budget before sending.
+  if (costGate.maxTokens !== undefined) chatRequest.maxTokens = costGate.maxTokens;
+
   const outcome = await runServerChat(chatRequest);
-  if (!outcome.ok) return res.status(outcome.status).json({ error: outcome.error });
+  if (!outcome.ok) {
+    // The request never reached the model (or failed) — release the
+    // reservation in full; nothing was spent.
+    await costGuard.settle(costGate.reservation, null);
+    return res.status(outcome.status).json({ error: outcome.error });
+  }
+
+  // Settle the ACTUAL cost and release the unused reservation, and record the
+  // ai_usage row for internal economics.
+  await costGuard.settle(costGate.reservation, {
+    provider: outcome.providerId,
+    model: outcome.model,
+    inputTokens: outcome.result.usage?.inputTokens ?? 0,
+    cachedInputTokens: outcome.result.usage?.cachedInputTokens ?? 0,
+    outputTokens: outcome.result.usage?.outputTokens ?? 0,
+  });
 
   res.status(200).json({
     content: outcome.result.content,

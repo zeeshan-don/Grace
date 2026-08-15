@@ -136,7 +136,7 @@ function runThrough(events: CoordinatorEvent[], opts: { live?: boolean; verbose?
 }
 
 test('progress: non-live output is deterministic — working line, bullets, done', () => {
-  const out = runThrough(scriptedRun(), { providerLabel: 'NVIDIA NIM', model: 'qwen/qwen2.5-coder-32b-instruct' });
+  const out = runThrough(scriptedRun(), { providerLabel: 'NVIDIA NIM', model: 'openai/gpt-oss-20b' });
   const lines = out.split('\n').filter(Boolean);
   assert.deepEqual(lines, [
     '  · Grace is working…',
@@ -150,8 +150,8 @@ test('progress: non-live output is deterministic — working line, bullets, done
 });
 
 test('progress: verbose mode adds the provider header', () => {
-  const out = runThrough(scriptedRun(), { verbose: true, providerLabel: 'NVIDIA NIM', model: 'qwen/qwen2.5-coder-32b-instruct' });
-  assert.match(out, /Grace · NVIDIA NIM · qwen\/qwen2\.5-coder-32b-instruct/);
+  const out = runThrough(scriptedRun(), { verbose: true, providerLabel: 'NVIDIA NIM', model: 'openai/gpt-oss-20b' });
+  assert.match(out, /Grace · NVIDIA NIM · openai\/gpt-oss-20b/);
 });
 
 test('progress: failed and unavailable agents render ✗ and ! marks', () => {

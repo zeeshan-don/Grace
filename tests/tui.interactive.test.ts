@@ -175,7 +175,7 @@ function freshStore(): TuiStore {
     workspace: 'C:\\work\\app',
     provider: 'NVIDIA NIM',
     providerAvailable: true,
-    model: 'qwen/qwen2.5-coder-32b-instruct',
+    model: 'openai/gpt-oss-20b',
     session: 'Local mode',
   });
 }

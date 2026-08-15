@@ -19,8 +19,15 @@ afterEach(() => {
   delete process.env.DATABASE_URL;
   delete process.env.GROQ_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   delete process.env.ZEESH_AUTH_RATE_LIMIT_MAX;
   delete process.env.ZEESH_API_RATE_LIMIT_MAX;
+  delete process.env.ZEESH_DAILY_COST_LIMIT_INR;
+  delete process.env.ZEESH_INR_PER_USD;
+  delete process.env.ZEESH_GLOBAL_DAILY_COST_LIMIT_INR;
+  delete process.env.ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR;
   delete process.env.ZEESH_BETA_MODE;
   delete process.env.ZEESH_BETA_ALLOWLIST;
   delete process.env.ZEESH_CORS_ORIGIN;
@@ -321,10 +328,13 @@ test('ApiClient surfaces 429 rate limits with retryAfterSeconds', async () => {
 // ---------------------------------------------------------------------------
 
 test('POST /api/provider returns a generic error when the provider key is missing', async () => {
-  // Both keys must be gone — this environment may carry real NVIDIA/Groq keys
-  // that would otherwise build a live chain and hit the real API.
+  // All keys must be gone — this environment may carry real .env keys that
+  // would otherwise build a live chain and hit the real API.
   delete process.env.GROQ_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   const mem = createMemoryDb();
   setDbForTests(mem.db);
   const { server, baseUrl } = await startServer();

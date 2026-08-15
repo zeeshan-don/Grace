@@ -8,7 +8,7 @@ advertising** (not yet implemented — see [Economics & Advertising](#economics-
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ GRACE   D:\Projects\my-app      · NVIDIA NIM · qwen/… · Local mode │
+│ GRACE   D:\Projects\my-app      · NVIDIA NIM · gpt-oss-20b · Local mode │
 └─────────────────────────────────────────────────────┘
 
                       ██████╗  ██████╗  █████╗  ██████╗ ███████╗
@@ -20,7 +20,7 @@ advertising** (not yet implemented — see [Economics & Advertising](#economics-
                             AI Coding Agent
 
                       Workspace  D:\Projects\my-app
-                      Model      NVIDIA NIM · qwen/qwen2.5-coder-32b-instruct
+                      Model      NVIDIA NIM · openai/gpt-oss-20b
                       Session    user@example.com · Local mode
 
 ╭───────────────────────────────────────────────────────╮
@@ -50,7 +50,7 @@ The agent inspects the repository, reads the relevant files, edits code, runs
 tests/builds, reads errors, attempts fixes, and iterates until the task is done
 or it needs your approval — then reports exactly what changed.
 
-**Status: Milestones 1–15 implemented** — a working local agent (M1–9: CLI,
+**Status: Milestones 1–15 + 18 implemented** — a working local agent (M1–9: CLI,
 Groq, agent loop, file tools, terminal execution, safety, git, provider
 abstraction), the cloud backend foundation (M10: Vercel-ready API, server-side
 provider keys, Neon schema + usage recording), real authentication
@@ -58,13 +58,17 @@ provider keys, Neon schema + usage recording), real authentication
 backend usage reporting), closed-beta readiness (M12: production-safe
 migrations + indexes, auth/error hardening, CORS + preflight, secret-safe
 request logging, closed-beta registration gate, Vercel config, deployment + beta
-checklist docs), the GRACE FREE daily session system (M13: 6 sessions/day ×
+checklist docs), the GRACE FREE daily session system (M13: 3 sessions/day ×
 60 minutes, enforced server-side in Neon with automatic session rollover), the
 subagent coordinator (M14: 9 specialized agents + a central coordinator that
-plans, delegates with narrow context/permissions and composes a concise answer)
-and the **primary-agent redesign** (M15: a fast local router, one primary
+plans, delegates with narrow context/permissions and composes a concise answer),
+the **primary-agent redesign** (M15: a fast local router, one primary
 agent by default, optional planning only for complex tasks, a calmer CLI and
-per-run instrumentation — see [Architecture](#primary-agent-architecture-milestone-15)).
+per-run instrumentation) and **Grace Free cost protection + the real provider
+chain** (M18: Gemini + MiniMax providers, Groq → NVIDIA → Gemini → MiniMax
+fallback routing, the internal ₹20/day/user cost ceiling with race-safe
+reservations, a global spending circuit breaker and the centralized pricing
+registry — see [Grace Free economics](#grace-free-economics--cost-protection)).
 The CLI stays fully local and works offline; the backend is **not deployed yet** —
 deployment is documented and ready (`docs/deployment.md`).
 
@@ -85,8 +89,10 @@ sponsored by Grace Hopper, her estate, or any related organization.
 
 - Node.js ≥ 23.6 (runs TypeScript directly via native type stripping)
 - A Groq API key — get one at <https://console.groq.com/>
-- Optional (backend only): an NVIDIA NIM API key for the server-side model
-  router — get one at <https://build.nvidia.com> (never needed on the CLI)
+- Optional (backend only): server-side provider keys for the model router —
+  NVIDIA NIM (<https://build.nvidia.com>), Gemini
+  (<https://aistudio.google.com/apikey>) and MiniMax
+  (<https://platform.minimax.io>) — never needed on the CLI
 
 ## Install & run (quick start)
 
@@ -148,16 +154,25 @@ backend only — never exposed to clients:
 | Variable | Used by | Purpose |
 | -------- | ------- | ------- |
 | `DATABASE_URL` | API | Neon PostgreSQL connection string (accounts, sessions, usage tables) |
-| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **fallback** provider for `/api/provider` |
-| `NVIDIA_API_KEY` | API only | Server-side **primary** provider (NVIDIA NIM) for `/api/provider` — never sent to the CLI |
+| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **primary** provider for `/api/provider` |
+| `NVIDIA_API_KEY` | API only | Server-side provider (NVIDIA NIM) for `/api/provider` — never sent to the CLI |
 | `ZEESH_API_URL` | CLI | Backend the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
 | `ZEESH_BETA_MODE` | API | `closed` gates registration behind the allowlist (default `open`) |
 | `ZEESH_BETA_ALLOWLIST` | API | Comma-separated emails allowed to register when closed |
 | `ZEESH_CORS_ORIGIN` | API | Browser origin allowed to call the API (default `*`) |
 | `ZEESH_AUTH_RATE_LIMIT_MAX` | API | Auth rate limit (default 50/15 min per IP) |
 | `ZEESH_API_RATE_LIMIT_MAX` | API | API rate limit (default 300/min per IP) |
-| `ZEESH_SESSIONS_PER_DAY` | API | Free-plan sessions per user per day (default 6) |
+| `ZEESH_SESSIONS_PER_DAY` | API | Free-plan sessions per user per day (default 3) |
 | `ZEESH_SESSION_DURATION_MINUTES` | API | Free-plan session length (default 60) |
+| `GEMINI_API_KEY` | API only | Server-side fallback provider (Gemini) — never sent to the CLI |
+| `MINIMAX_API_KEY` | API only | Server-side fallback provider (MiniMax, last in the chain) — never sent to the CLI |
+| `DEEPSEEK_API_KEY` | API only | Optional DeepSeek provider leg — never sent to the CLI |
+| `ZEESH_SERVER_ROUTING` | API only | Override the provider chain order (comma-separated ids) |
+| `ZEESH_DAILY_COST_LIMIT_INR` | API only | Internal per-user daily cost ceiling (default ₹20, 0 disables) |
+| `ZEESH_INR_PER_USD` | API only | INR→USD rate for the ceiling (default 83) |
+| `ZEESH_GLOBAL_DAILY_COST_LIMIT_INR` | API only | Global hosted spending circuit breaker per UTC day (default 0 = off) |
+| `ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR` | API only | Global hosted spending circuit breaker per UTC month (default 0 = off) |
+| `ZEESH_PRICING_JSON` | API only | Optional per-model price overrides (see `.env.example`) |
 
 `ZEESH_API_TOKEN` (Milestone 10's shared-token placeholder) has been removed in
 favour of real per-user sessions.
@@ -227,15 +242,19 @@ The free tier is enforced **entirely server-side** — the CLI never stores or
 trusts session state, so restarting it or deleting local files can never reset
 the quota:
 
-- **6 sessions per user per day**, each **up to 60 minutes** → 6 h/day max.
+- **3 sessions per user per day**, each **up to 60 minutes** → 3 h/day max.
 - A session is a rolling 60-minute window: it starts when the first inference
   request of the day arrives and **expires automatically** 60 minutes later.
   The next request then **automatically starts the next session** — the CLI
-  shows `Session X / 6` and a note when the rollover happens.
+  shows `Session X / 3` and a note when the rollover happens.
 - The **day boundary is 00:00 UTC** (server-authoritative, timezone-independent).
-- When all 6 sessions are used, `POST /api/provider` is refused with
+- When all 3 sessions are used, `POST /api/provider` is refused with
   `429 { "code": "daily_limit_exhausted" }` and a `Retry-After` hint pointing
   at the next UTC day.
+- A session starts **only** when hosted inference is actually required —
+  `/help`, `/status`, local commands and read-only endpoints never consume
+  a session (and a request refused by the internal cost ceiling consumes no
+  session either).
 - `GET /api/usage` returns the full state: `sessionsUsed`, `sessionsRemaining`,
   `currentSession`, `sessionStartedAt`, `sessionExpiresAt`, `dailyUsedSeconds`,
   `dailyLimitSeconds`. Every `/api/provider` response embeds the same state
@@ -257,33 +276,37 @@ GRACE CLI
     ↓
 Vercel /api/provider
     ↓
-Model Router
-    ├── NVIDIA NIM   (primary — NVIDIA_API_KEY, default model qwen/qwen2.5-coder-32b-instruct)
-    └── Groq         (fallback — GROQ_API_KEY)
+Model Router (server-side chain, each leg only when its key is set)
+    ├── 1. Groq          (GROQ_API_KEY — openai/gpt-oss-120b coding default)
+    ├── 2. NVIDIA NIM    (NVIDIA_API_KEY — openai/gpt-oss-20b)
+    ├── 3. Gemini        (GEMINI_API_KEY — gemini-3.1-flash-lite)
+    └── 4. MiniMax       (MINIMAX_API_KEY — MiniMax-M3)
 ```
 
-- **NVIDIA is primary** whenever `NVIDIA_API_KEY` is set server-side; Groq is
-  the automatic fallback whenever `GROQ_API_KEY` is set. Both keys can be set
-  at once; with only one key the chain is just that provider (Groq-only
-  deployments behave exactly as before). With neither, `/api/provider`
-  refuses with a clear 503.
-- **Safe fallback at the model-request boundary** — if NVIDIA fails (rate
-  limit, timeout, model unavailable, network, auth, malformed response), the
-  *same request* is retried on Groq **before any response is consumed**, so a
-  fallback can never duplicate a tool execution (tools run client-side only
-  after a successful response). We never retry after a partial response.
+- **Groq is primary** (fast, generous free tier); NVIDIA NIM, Gemini
+  3.1 Flash-Lite and MiniMax-M3 follow in order. Every provider is a real,
+  implemented adapter (`src/providers/`), included only when its server-side
+  key is configured. The order is centralized in `src/agents/modelRouter.ts`
+  and can be reordered per deployment with `ZEESH_SERVER_ROUTING`.
+- **Safe fallback at the model-request boundary** — if a provider fails with a
+  *provider-level* error (rate limit, quota exhausted, timeout, model
+  unavailable, provider outage/server error, network), the *same request* is
+  retried on the next provider **before any response is consumed**, so a
+  fallback can never duplicate a tool execution. We never retry after a
+  partial response, and we never switch providers for task/model/tool errors
+  (malformed tool arguments, failed commands, a difficult question — those
+  are handled inside the agent).
 - **Model selection** — the model id the CLI sends (configured via
-  `/model <id>` or `--model`) is passed to both providers. Set an
-  NVIDIA-hosted id (e.g. `qwen/qwen2.5-coder-32b-instruct` or
-  `deepseek-ai/deepseek-r1`) to run on NVIDIA; any id NVIDIA does not serve
-  falls through to Groq automatically.
+  `/model <id>` or `--model`) is verified per provider against its live
+  catalog; a model a provider does not serve falls through to that provider's
+  tier default.
 - **Provider status** — the backend reports which provider actually served
   each request (`provider_id` / `provider_label`), and the CLI shows it:
 
   ```
   grace › /model
   Provider: NVIDIA NIM via GRACE backend
-  Model:    qwen/qwen2.5-coder-32b-instruct
+  Model:    openai/gpt-oss-20b
   ```
 
 - **Failure taxonomy** — provider failures are classified
@@ -431,8 +454,9 @@ CLI (src/cli)  →  AgentLoop (src/agent)  →  Tools (src/tools)  →  project 
               AIProvider (src/providers)     ← provider-agnostic
                      │
                      ▼
-               GroqProvider · NvidiaProvider (implemented)
-               Gemini/Anthropic/OpenAI/Ollama (extension points)
+               GroqProvider · NvidiaProvider · DeepSeekProvider
+               GeminiProvider · MiniMaxProvider (all real, fetch-based)
+               Anthropic/OpenAI/Ollama (extension points)
 ```
 
 Key directories:
@@ -447,8 +471,9 @@ src/
   agent/      loop.ts (reason→act→observe) · context.ts (token budget)
   tools/      read_file, write_file, edit_file, search_files,
               list_directory, run_command, git_diff, web_fetch
-  providers/  types.ts (AIProvider contract) · groq.ts · nvidia.ts · fallback.ts
-              · errors.ts (failure taxonomy) · registry.ts
+  providers/  types.ts (AIProvider contract) · groq.ts · nvidia.ts · gemini.ts
+              · minimax.ts · deepseek.ts · fallback.ts · errors.ts (failure
+              taxonomy) · registry.ts
   api/        backend (M10): handlers, server-side providers, usage,
               db (Neon), auth-ready guard, local dev server
   project/    detect.ts (type/framework/PM detection) · index.ts (repo index)
@@ -493,16 +518,17 @@ LOCAL CLI  →  GRACE API  →  Vercel  →  Neon PostgreSQL  →  AI providers
 - **Server-side provider layer** — `src/api/providers.ts` reuses the existing
   `AIProvider` abstraction, but provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`)
   live on the server so production keys never reach the CLI or the browser.
-  `createServerRouter` builds the Model Router chain (NVIDIA primary → Groq
-  fallback) per request; failures are classified and reported without secrets.
+  `createServerRouter` builds the Model Router chain (Groq → NVIDIA NIM →
+  Gemini → MiniMax) per request; failures are classified and reported
+  without secrets.
 - **Neon PostgreSQL** — `src/api/db.ts` connects via `DATABASE_URL` (lazily,
   so the API still boots without a database). Schema in
-  `db/migrations/001_init.sql` … `004_free_sessions.sql`.
+  `db/migrations/001_init.sql` … `005_cost_guard.sql`.
 - **Usage recording** — the CLI reports `user_id`, `model`, `input_tokens`,
   `output_tokens`, `agent_turns`, `timestamp` and `execution_time_ms` after
   each run when logged in (`src/auth/reporting.ts`). Reporting is
   fire-and-forget and never breaks the local agent (see `docs/api.md`).
-- **Free plan sessions (M13)** — `src/api/freeSessions.ts` enforces 6 sessions
+- **Free plan sessions (M13)** — `src/api/freeSessions.ts` enforces 3 sessions
   of 60 minutes per user per UTC day on the server (`free_sessions` table,
   race-safe via a unique constraint). `/api/provider` is gated before any model
   call; expired sessions auto-roll into the next one and a fully-used day gets
@@ -552,12 +578,13 @@ npm run build        # emit dist/
 | 10 | Backend + Neon                | ✅ (API, server-side providers, Neon schema + usage) |
 | 11 | Auth + usage tracking         | ✅ (user accounts + sessions, CLI login/logout/whoami, resilient usage reporting) |
 | 12 | Closed beta                   | ✅ (hardening, CORS, safe logging, closed-beta gate, Vercel config, deployment + beta checklist docs — deploy not yet performed) |
-| 13 | GRACE FREE daily sessions     | ✅ (6 sessions/day × 60 min, server-enforced in Neon, auto-rollover, CLI quota display, tests — no ads, no fake numbers) |
+| 13 | GRACE FREE daily sessions     | ✅ (3 sessions/day × 60 min, server-enforced in Neon, auto-rollover, CLI quota display, tests — no ads, no fake numbers) |
 | 14 | Subagent coordinator          | ✅ (9 specialized agents + central coordinator: planning, narrow context + permissions, parallel delegation, failure recovery, project index, CLI progress UX — tests + docs) |
 | 15 | Primary-agent redesign        | ✅ (fast local router, one primary agent by default, optional planning for complex tasks only, calmer state-based CLI progress, per-run instrumentation — LLM calls / time-to-first-tool, DeepSeek provider added, usage from every internal call aggregated — tests + docs) |
 | 16 | Full-screen TUI               | ✅ (Ink-powered interactive TUI: alternate screen, real input + history, live activity feed, model/provider pickers from real providers, slash-command palette, interactive permission dialogs, scrolling, resize handling, structured tool events from the agent — unit + interactive mock-terminal tests) |
 | 17 | Measure real AI cost/user     | ⏳ (economics docs + `models` pricing table ready — needs live data) |
-| 18 | Advertising (after economics) | ⏳                          |
+| 18 | Cost guard + provider chain    | ✅ (real Gemini + MiniMax providers, Groq→NVIDIA→Gemini→MiniMax fallback chain, internal ₹20/day/user cost ceiling with race-safe reservations, global circuit breaker, centralized pricing registry, per-request cost ledger — tests + docs; see [Grace Free economics](#grace-free-economics--cost-protection)) |
+| 19 | Advertising (after economics) | ⏳ (optional sponsorship abstraction ready — `src/ads/sponsor.ts`, disabled by default) |
 
 ## Validation records
 
@@ -590,6 +617,31 @@ for it:
   run whenever a session exists (`grace login`).
 - Ads must be developer-focused (cloud, hosting, dev tools, AI APIs, DBs) and
   must never use private source code, secrets, or user data.
+
+## Grace Free economics & cost protection
+
+The user experience stays clean: **no API key required**, **no credits, token
+counts or costs shown**, **3 sessions/day × 60 minutes**, and coding that feels
+unlimited inside an active session. Under the hood the backend aggressively
+controls infrastructure spend:
+
+- **Internal daily ceiling: ₹20 per user per day** (`ZEESH_DAILY_COST_LIMIT_INR`,
+  default 20) — a hard server-side cap on estimated hosted AI cost. The CLI is
+  never trusted; the server reserves budget **before** every paid request
+  (worst-case estimate, race-safe atomic ledger in Neon), caps the max output
+  tokens to what the remaining budget allows, and settles the actual cost
+  afterwards, releasing the unused reservation. A request that could obviously
+  exceed the remaining budget is never started.
+- **Money is exact**: all accounting is integer microdollars (`src/costs/money.ts`),
+  prices live in ONE registry (`src/costs/pricing.ts`, MiniMax-M3 context
+  tiers included, overridable via `ZEESH_PRICING_JSON`), and every request is
+  recorded in `ai_usage` (`005_cost_guard.sql`).
+- **Global circuit breaker**: optional cross-user daily/monthly limits
+  (`ZEESH_GLOBAL_DAILY_COST_LIMIT_INR` / `ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR`,
+  default off) stop paid fallback requests safely when reached.
+- **Users never see the economics**: when the daily ceiling is reached the
+  only message is *"Grace has reached today's usage capacity. Please try again
+  after the daily reset."* — no rupee amounts, no tokens, no provider names.
 
 ## Known limitations (v0.1)
 

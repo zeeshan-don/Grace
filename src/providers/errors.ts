@@ -22,8 +22,10 @@ import { redactSecrets } from '../safety/policy.ts';
 export type ProviderErrorCategory =
   | 'authentication'
   | 'rate_limit'
+  | 'quota_exhausted'
   | 'timeout'
   | 'unavailable_model'
+  | 'server_error'
   | 'malformed_response'
   | 'network'
   | 'unknown';
@@ -63,16 +65,50 @@ export function describeCategory(category: ProviderErrorCategory): string {
       return 'authentication failed';
     case 'rate_limit':
       return 'rate limit hit';
+    case 'quota_exhausted':
+      return 'quota exhausted';
     case 'timeout':
       return 'timed out';
     case 'unavailable_model':
       return 'model unavailable';
+    case 'server_error':
+      return 'provider outage';
     case 'malformed_response':
       return 'malformed response';
     case 'network':
       return 'network failure';
     default:
       return 'request failed';
+  }
+}
+
+/**
+ * Provider-level failures that should activate the fallback router.
+ *
+ * These are the ONLY categories that may switch providers: genuine
+ * provider-level problems (quota exhausted, confirmed rate limit, provider
+ * unavailable/outage, model unavailable, sustained server errors, capacity
+ * errors). Task/model/tool failures — malformed tool arguments, invalid tool
+ * calls, failed commands, a difficult question — are NOT provider errors;
+ * they never surface as a `ProviderError` from the provider boundary (they
+ * are handled inside the agent loop), so they can never trigger fallback.
+ */
+export function isFallbackEligible(category: ProviderErrorCategory): boolean {
+  switch (category) {
+    case 'rate_limit':
+    case 'quota_exhausted':
+    case 'timeout':
+    case 'unavailable_model':
+    case 'server_error':
+    case 'malformed_response':
+    case 'network':
+      return true;
+    case 'authentication':
+    case 'unknown':
+      // Authentication can be provider-specific (one key invalid, others
+      // fine) — fall through to the next provider too. `unknown` is wrapped
+      // as a provider-level failure by construction (ProviderError.wrap).
+      return true;
   }
 }
 
@@ -83,10 +119,14 @@ export function describeProviderError(err: ProviderError): string {
       return 'The AI provider rejected the server-side API key (authentication failed).';
     case 'rate_limit':
       return 'The AI provider rate limit was hit — wait a moment and retry.';
+    case 'quota_exhausted':
+      return 'The AI provider quota is exhausted for this account — the router tries the next provider automatically.';
     case 'timeout':
       return 'The AI provider request timed out — retry.';
     case 'unavailable_model':
       return 'The requested model is unavailable on the AI provider — pick a different model with /model.';
+    case 'server_error':
+      return 'The AI provider is experiencing an outage — the router tries the next provider automatically.';
     case 'malformed_response':
       return 'The AI provider returned a malformed response — retry.';
     case 'network':
@@ -102,7 +142,7 @@ export function describeProviderError(err: ProviderError): string {
  * everything else stays a generic 502.
  */
 export function statusForCategory(category: ProviderErrorCategory): number {
-  if (category === 'rate_limit') return 429;
+  if (category === 'rate_limit' || category === 'quota_exhausted') return 429;
   if (category === 'timeout') return 504;
   return 502;
 }

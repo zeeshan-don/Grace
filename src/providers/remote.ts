@@ -248,9 +248,10 @@ export class RemoteProvider implements AIProvider {
       return 'Your GRACE session is invalid or expired — run "grace login" again.';
     }
     if (status === 429) {
-      if (code === 'daily_limit_exhausted') {
-        // The server's message is the authoritative, user-safe text.
-        return error ?? 'You have used all free sessions for today.';
+      if (code === 'daily_limit_exhausted' || code === 'daily_cost_exhausted' || code === 'global_cost_exhausted') {
+        // The server's message is the authoritative, user-safe text (it never
+        // reveals spending, tokens or provider economics).
+        return error ?? 'Grace has reached today\'s usage capacity. Please try again after the daily reset.';
       }
       return 'The GRACE backend rate limit was hit — wait a moment and retry.';
     }

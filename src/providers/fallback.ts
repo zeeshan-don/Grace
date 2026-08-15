@@ -11,7 +11,7 @@
  * All failure detail is kept sanitized (no API keys), and the aggregate error
  * names every provider that failed so the operator can see the chain state.
  */
-import { ProviderError, scrub, describeCategory, type ProviderErrorCategory } from './errors.ts';
+import { ProviderError, scrub, describeCategory, isFallbackEligible, type ProviderErrorCategory } from './errors.ts';
 import type { AIProvider, ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent } from './types.ts';
 
 /** One entry of the last request's attempt log (sanitized, for status/logs). */
@@ -91,9 +91,16 @@ export class FallbackProvider implements AIProvider {
         });
         // Fallback is safe here by construction: we never saw a response, so
         // nothing was executed — a request to the next provider cannot
-        // duplicate tool work. All categories (auth, rate limit, timeout,
-        // model unavailable, malformed response, network) are eligible; the
-        // failure stays visible in `attemptLog` and the aggregate error.
+        // duplicate tool work. Only provider-level failures activate the
+        // router (see isFallbackEligible); task/model/tool errors never
+        // surface as ProviderError from the provider boundary, so they can
+        // never trigger a switch. The failure stays visible in `attemptLog`
+        // and the aggregate error.
+        if (!isFallbackEligible(providerError.category)) {
+          this.servingProvider = null;
+          this.attemptLog = attempts;
+          throw providerError;
+        }
       }
     }
 

@@ -5,12 +5,14 @@ This document explains how to deploy the GRACE backend to **Vercel** with a
 placeholders and instructions.
 
 ```
-LOCAL CLI  →  GRACE API (Vercel)  →  Neon PostgreSQL  →  Model Router → NVIDIA NIM (primary) → Groq (fallback)
+LOCAL CLI  →  GRACE API (Vercel)  →  Neon PostgreSQL  →  Model Router → Groq → NVIDIA NIM → Gemini → MiniMax
 ```
 
-*Without `NVIDIA_API_KEY`, `/api/provider` works exactly as before using only
-`GROQ_API_KEY` (required). With both set, NVIDIA NIM is tried first and Groq
-is the automatic fallback for the same request.
+*With only `GROQ_API_KEY` set (required), `/api/provider` works exactly as
+before. Each additional key adds a fallback leg to the same request: NVIDIA
+NIM, then Gemini, then MiniMax (order overridable via `ZEESH_SERVER_ROUTING`).
+The chain only ever moves to the next provider on a provider-level failure,
+never after a partial response.*
 
 The local CLI itself is not deployed: it runs on the developer's machine and
 talks to this backend only for accounts + usage reporting (`grace login`).
@@ -74,8 +76,10 @@ Variables) for the `production` (and `preview`) environments:
 | Variable | Required | Purpose |
 | -------- | -------- | ------- |
 | `DATABASE_URL` | yes | Neon pooled connection string (`postgresql://…`) |
-| `GROQ_API_KEY` | yes | Server-side AI key for `/api/provider` (fallback provider) — never exposed to clients |
-| `NVIDIA_API_KEY` | no* | Server-side primary provider (NVIDIA NIM) for `/api/provider` — never exposed to clients. Set it to route NVIDIA first with Groq as fallback; without it the router is Groq-only |
+| `GROQ_API_KEY` | yes | Server-side AI key for `/api/provider` (primary provider) — never exposed to clients |
+| `NVIDIA_API_KEY` | no* | Server-side provider (NVIDIA NIM) for `/api/provider` — never exposed to clients. Adds a fallback leg after Groq |
+| `GEMINI_API_KEY` | no* | Server-side fallback provider (Gemini, `gemini-3.1-flash-lite`) — never exposed to clients |
+| `MINIMAX_API_KEY` | no* | Server-side fallback provider (MiniMax-M3, last in the chain) — never exposed to clients |
 | `ZEESH_BETA_MODE` | no | `closed` to gate registration behind an allowlist (default `open`) |
 | `ZEESH_BETA_ALLOWLIST` | no | Comma-separated emails allowed to register when closed |
 | `ZEESH_CORS_ORIGIN` | no | Browser origin allowed to call the API (default `*`) |
@@ -107,6 +111,7 @@ psql "$DATABASE_URL" -f db/migrations/001_init.sql
 psql "$DATABASE_URL" -f db/migrations/002_auth.sql
 psql "$DATABASE_URL" -f db/migrations/003_closed_beta.sql
 psql "$DATABASE_URL" -f db/migrations/004_free_sessions.sql
+psql "$DATABASE_URL" -f db/migrations/005_cost_guard.sql
 ```
 
 Verify:

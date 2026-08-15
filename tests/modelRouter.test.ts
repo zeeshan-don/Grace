@@ -63,7 +63,7 @@ test('NVIDIA is primary for coding/reasoning/review; Groq for fast', () => {
 });
 
 test('the default router resolves genuinely different routes per role', () => {
-  const preferred = 'qwen/qwen2.5-coder-32b-instruct';
+  const preferred = 'openai/gpt-oss-20b';
   const editor = DEFAULT_MODEL_ROUTER.resolve('editor', tierForRole('editor'), preferred);
   const scout = DEFAULT_MODEL_ROUTER.resolve('project-scout', tierForRole('project-scout'), preferred);
   const thinker = DEFAULT_MODEL_ROUTER.resolve('thinker', tierForRole('thinker'), preferred);
@@ -72,7 +72,7 @@ test('the default router resolves genuinely different routes per role', () => {
 
   assert.deepEqual(
     { provider: editor.provider, model: editor.model, tier: editor.tier, role: editor.role },
-    { provider: 'nvidia', model: 'qwen/qwen2.5-coder-32b-instruct', tier: 'coding', role: 'editor' },
+    { provider: 'nvidia', model: 'openai/gpt-oss-20b', tier: 'coding', role: 'editor' },
   );
   assert.deepEqual(
     { provider: scout.provider, model: scout.model, tier: scout.tier },
@@ -80,11 +80,11 @@ test('the default router resolves genuinely different routes per role', () => {
   );
   assert.deepEqual(
     { provider: thinker.provider, model: thinker.model, tier: thinker.tier },
-    { provider: 'nvidia', model: 'deepseek-ai/deepseek-r1', tier: 'reasoning' },
+    { provider: 'nvidia', model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', tier: 'reasoning' },
   );
   assert.deepEqual(
     { provider: reviewer.provider, model: reviewer.model, tier: reviewer.tier },
-    { provider: 'nvidia', model: 'qwen/qwen2.5-coder-32b-instruct', tier: 'review' },
+    { provider: 'nvidia', model: 'openai/gpt-oss-20b', tier: 'review' },
   );
   assert.equal(tester.tier, 'no_llm');
   assert.equal(tester.provider, 'none');
@@ -93,16 +93,16 @@ test('the default router resolves genuinely different routes per role', () => {
 
 test('pickModelForProvider never returns a model the provider does not serve', () => {
   // Unknown preferred model → the tier's own default.
-  assert.equal(pickModelForProvider('nvidia', 'coding', 'not-a-real-model'), 'qwen/qwen2.5-coder-32b-instruct');
+  assert.equal(pickModelForProvider('nvidia', 'coding', 'not-a-real-model'), 'openai/gpt-oss-20b');
   // A known NVIDIA model is honored on the coding tier.
-  assert.equal(pickModelForProvider('nvidia', 'coding', 'deepseek-ai/deepseek-r1'), 'deepseek-ai/deepseek-r1');
+  assert.equal(pickModelForProvider('nvidia', 'coding', 'nvidia/llama-3.3-nemotron-super-49b-v1.5'), 'nvidia/llama-3.3-nemotron-super-49b-v1.5');
   // An NVIDIA-only model is never forced onto Groq.
-  assert.equal(pickModelForProvider('groq', 'coding', 'qwen/qwen2.5-coder-32b-instruct'), 'openai/gpt-oss-120b');
+  assert.equal(pickModelForProvider('groq', 'coding', 'nvidia/llama-3.3-nemotron-super-49b-v1.5'), 'openai/gpt-oss-120b');
   // A known Groq model is honored on the coding tier.
   assert.equal(pickModelForProvider('groq', 'coding', 'openai/gpt-oss-120b'), 'openai/gpt-oss-120b');
   // The user's preference never overrides the fast/reasoning/review tiers.
   assert.equal(pickModelForProvider('groq', 'fast', 'openai/gpt-oss-120b'), 'openai/gpt-oss-20b');
-  assert.equal(pickModelForProvider('nvidia', 'reasoning', 'qwen/qwen2.5-coder-32b-instruct'), 'deepseek-ai/deepseek-r1');
+  assert.equal(pickModelForProvider('nvidia', 'reasoning', 'openai/gpt-oss-20b'), 'nvidia/llama-3.3-nemotron-super-49b-v1.5');
 });
 
 test('every tier resolves to a valid, known model on both providers', () => {
@@ -116,10 +116,23 @@ test('every tier resolves to a valid, known model on both providers', () => {
   }
 });
 
-test('server routing preference leads with Groq for fast, NVIDIA otherwise', () => {
-  assert.deepEqual([...serverRoutingPreference('fast')], ['groq', 'nvidia']);
-  assert.deepEqual([...serverRoutingPreference('coding')], ['nvidia', 'groq']);
-  assert.deepEqual([...serverRoutingPreference()], ['nvidia', 'groq']);
+test('server routing preference is Groq → NVIDIA → Gemini → MiniMax (fast leads with Groq)', () => {
+  assert.deepEqual([...serverRoutingPreference('fast')], ['groq', 'nvidia', 'gemini', 'minimax']);
+  assert.deepEqual([...serverRoutingPreference('coding')], ['groq', 'nvidia', 'gemini', 'minimax']);
+  assert.deepEqual([...serverRoutingPreference()], ['groq', 'nvidia', 'gemini', 'minimax']);
+});
+
+test('gemini and minimax resolve known models for every tier', () => {
+  for (const provider of ['gemini', 'minimax'] as const) {
+    for (const tier of ['fast', 'coding', 'reasoning', 'review'] as const) {
+      const model = pickModelForProvider(provider, tier);
+      assert.ok(model.length > 0, `${provider}/${tier} resolves a model`);
+      assert.ok(isKnownModel(provider, model), `${model} is served by ${provider}`);
+    }
+  }
+  // The configured defaults: Gemini Flash-Lite and MiniMax-M3.
+  assert.equal(pickModelForProvider('gemini', 'coding'), 'gemini-3.1-flash-lite');
+  assert.equal(pickModelForProvider('minimax', 'coding'), 'MiniMax-M3');
 });
 
 // ---------------------------------------------------------------------------
@@ -143,7 +156,7 @@ function fakeRuntime(provider: AIProvider | null, model: string): Runtime {
 
 test('RoleModelRouter builds a different route per role over the remote backend', () => {
   const base = new RemoteProvider({ apiUrl: 'https://zeesh-ai.vercel.app', token: 't'.repeat(64) });
-  const router = new RoleModelRouter(fakeRuntime(base, 'qwen/qwen2.5-coder-32b-instruct'));
+  const router = new RoleModelRouter(fakeRuntime(base, 'nvidia/llama-3.3-nemotron-super-49b-v1.5'));
 
   const editor = router.providerFor('editor', AGENT_SPECS['editor']);
   const scout = router.providerFor('project-scout', AGENT_SPECS['project-scout']);
@@ -152,11 +165,11 @@ test('RoleModelRouter builds a different route per role over the remote backend'
   assert.ok(editor instanceof RemoteProvider, 'editor routes through the backend');
   assert.ok(scout instanceof RemoteProvider);
   assert.ok(planner instanceof RemoteProvider);
-  assert.equal((editor as RemoteProvider).getModel().id, 'qwen/qwen2.5-coder-32b-instruct', 'editor → CODING');
+  assert.equal((editor as RemoteProvider).getModel().id, 'nvidia/llama-3.3-nemotron-super-49b-v1.5', 'editor → CODING');
   assert.equal((editor as RemoteProvider).modelTier, 'coding');
   assert.equal((scout as RemoteProvider).getModel().id, 'openai/gpt-oss-20b', 'scout → FAST');
   assert.equal((scout as RemoteProvider).modelTier, 'fast');
-  assert.equal((planner as RemoteProvider).getModel().id, 'deepseek-ai/deepseek-r1', 'coordinator planning → REASONING');
+  assert.equal((planner as RemoteProvider).getModel().id, 'nvidia/llama-3.3-nemotron-super-49b-v1.5', 'coordinator planning → REASONING');
   assert.equal((planner as RemoteProvider).modelTier, 'reasoning');
   assert.notEqual(
     (editor as RemoteProvider).getModel().id,

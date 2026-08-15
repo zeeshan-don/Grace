@@ -131,12 +131,12 @@ test('RemoteProvider sends the role tier hint with each request', async () => {
 test('RemoteProvider.withModel clones the provider for a different role route', async () => {
   const mock = await startMock(() => ({ status: 200, body: { content: 'ok' } }));
   const base = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok', model: 'm-1' });
-  const routed = base.withModel('deepseek-ai/deepseek-r1', 'reasoning');
-  assert.equal(routed.getModel().id, 'deepseek-ai/deepseek-r1');
+  const routed = base.withModel('nvidia/llama-3.3-nemotron-super-49b-v1.5', 'reasoning');
+  assert.equal(routed.getModel().id, 'nvidia/llama-3.3-nemotron-super-49b-v1.5');
   assert.equal(routed.modelTier, 'reasoning');
   await routed.chat(msgs);
   const body = mock.requests[0]?.body as { model: string; tier?: string };
-  assert.equal(body.model, 'deepseek-ai/deepseek-r1');
+  assert.equal(body.model, 'nvidia/llama-3.3-nemotron-super-49b-v1.5');
   assert.equal(body.tier, 'reasoning');
 });
 
@@ -150,12 +150,12 @@ test('RemoteProvider shares the freshest session/provider state across instances
       provider_label: 'NVIDIA NIM',
       session: {
         sessionsUsed: 2,
-        sessionsRemaining: 4,
+        sessionsRemaining: 1,
         currentSession: 2,
         sessionStartedAt: '2026-08-10T09:00:00.000Z',
         sessionExpiresAt: '2026-08-10T10:00:00.000Z',
         dailyUsedSeconds: 3600,
-        dailyLimitSeconds: 21600,
+        dailyLimitSeconds: 10800,
       },
     },
   }));
@@ -201,12 +201,12 @@ test('RemoteProvider captures the GRACE FREE session state from the response', a
       finish_reason: 'stop',
       session: {
         sessionsUsed: 2,
-        sessionsRemaining: 4,
+        sessionsRemaining: 1,
         currentSession: 2,
         sessionStartedAt: '2026-08-10T09:00:00.000Z',
         sessionExpiresAt: '2026-08-10T10:00:00.000Z',
         dailyUsedSeconds: 3600,
-        dailyLimitSeconds: 21600,
+        dailyLimitSeconds: 10800,
         startedNew: true,
       },
     },
@@ -215,13 +215,13 @@ test('RemoteProvider captures the GRACE FREE session state from the response', a
   await provider.chat(msgs);
   assert.equal(provider.lastSession?.currentSession, 2);
   assert.equal(provider.lastSession?.startedNew, true, 'rollover is surfaced to the CLI');
-  assert.equal(provider.lastSession?.sessionsRemaining, 4);
+  assert.equal(provider.lastSession?.sessionsRemaining, 1);
 });
 
 test('RemoteProvider maps 429 daily_limit_exhausted to the server message', async () => {
   const mock = await startMock(() => ({
     status: 429,
-    body: { error: 'You have used all 6 free sessions for today.', code: 'daily_limit_exhausted' },
+    body: { error: 'You have used all 3 free sessions for today.', code: 'daily_limit_exhausted' },
   }));
   const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok' });
   await assert.rejects(
@@ -229,7 +229,7 @@ test('RemoteProvider maps 429 daily_limit_exhausted to the server message', asyn
     (err: unknown) =>
       err instanceof RemoteProviderError &&
       err.status === 429 &&
-      /all 6 free sessions/.test(err.message),
+      /all 3 free sessions/.test(err.message),
   );
 });
 

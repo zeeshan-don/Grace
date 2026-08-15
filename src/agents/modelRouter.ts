@@ -17,9 +17,12 @@ export type { ModelTier } from './types.ts';
  *   - review    code review
  *   - no_llm    roles that must not consume a model request (test runner)
  *
- * Provider policy: NVIDIA is primary for coding/reasoning/review; Groq is
- * primary for fast tasks (and the automatic fallback for everything else).
- * This is the single place where role → tier → provider → model is decided.
+ * Provider policy: the server chain is Groq → NVIDIA → Gemini → MiniMax
+ * (see SERVER_ROUTING_PREFERENCE; fast tasks keep Groq first). The client
+ * default router prefers NVIDIA for coding/reasoning/review as the
+ * "user-preferred" hint; the server remains authoritative for the actual
+ * chain. This is the single place where role → tier → provider → model is
+ * decided.
  */
 
 export interface ModelRoute {
@@ -69,16 +72,19 @@ export const COORDINATOR_TIER: ModelTier = 'reasoning';
 
 /**
  * Per-provider model tables, ordered best-first. Only models actually served
- * by the provider are listed (NVIDIA: qwen2.5-coder + deepseek-r1 catalog
- * entries; Groq: documented Groq ids). The server additionally verifies
- * against the live provider catalog when a model is not on this list.
+ * by the provider are listed. NVIDIA serves GPT-OSS 20B (fast, tool calling)
+ * with Nemotron Super as a reasoning-capable alternative — the earlier
+ * qwen2.5-coder / deepseek-r1 catalog entries reached end-of-life on NVIDIA
+ * (HTTP 410). Groq ids are the documented Groq catalog. The server
+ * additionally verifies against the live provider catalog when a model is
+ * not on this list.
  */
 export const TIER_MODELS: Record<string, Record<ModelTier, readonly string[]>> = {
   nvidia: {
-    fast: ['qwen/qwen2.5-coder-32b-instruct'],
-    coding: ['qwen/qwen2.5-coder-32b-instruct', 'deepseek-ai/deepseek-r1'],
-    reasoning: ['deepseek-ai/deepseek-r1', 'qwen/qwen2.5-coder-32b-instruct'],
-    review: ['qwen/qwen2.5-coder-32b-instruct', 'deepseek-ai/deepseek-r1'],
+    fast: ['openai/gpt-oss-20b'],
+    coding: ['openai/gpt-oss-20b', 'nvidia/llama-3.3-nemotron-super-49b-v1.5'],
+    reasoning: ['nvidia/llama-3.3-nemotron-super-49b-v1.5', 'openai/gpt-oss-20b'],
+    review: ['openai/gpt-oss-20b', 'nvidia/llama-3.3-nemotron-super-49b-v1.5'],
     no_llm: [],
   },
   groq: {
@@ -91,14 +97,29 @@ export const TIER_MODELS: Record<string, Record<ModelTier, readonly string[]>> =
     review: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],
     no_llm: [],
   },
-  // DeepSeek is fully implemented and registered; adding it to the server
-  // routing chain is a one-line change (SERVER_ROUTING_PREFERENCE + the
-  // DEEPSEEK_API_KEY env mapping in src/api/providers.ts).
   deepseek: {
     fast: ['deepseek-chat'],
     coding: ['deepseek-chat', 'deepseek-reasoner'],
     reasoning: ['deepseek-reasoner', 'deepseek-chat'],
     review: ['deepseek-chat', 'deepseek-reasoner'],
+    no_llm: [],
+  },
+  // Gemini (Google AI). gemini-3.1-flash-lite is the configured fallback
+  // model — cheap, 1M context, function calling.
+  gemini: {
+    fast: ['gemini-3.1-flash-lite'],
+    coding: ['gemini-3.1-flash-lite'],
+    reasoning: ['gemini-3.1-flash-lite'],
+    review: ['gemini-3.1-flash-lite'],
+    no_llm: [],
+  },
+  // MiniMax. MiniMax-M3 is the configured fallback model (1M context,
+  // tool calling, agentic/coding SOTA).
+  minimax: {
+    fast: ['MiniMax-M3'],
+    coding: ['MiniMax-M3'],
+    reasoning: ['MiniMax-M3'],
+    review: ['MiniMax-M3'],
     no_llm: [],
   },
 };
@@ -152,13 +173,25 @@ export const DEFAULT_MODEL_ROUTER: ModelRouter = {
 };
 
 /**
- * Server-side provider order per tier (the "Model Router" chain). NVIDIA is
- * the primary provider for coding/reasoning/review; fast tasks lead with
- * Groq so cheap quick work does not consume the NVIDIA/NIM budget.
+ * Server-side provider order per tier (the "Model Router" chain):
+ *
+ *   Groq → NVIDIA NIM → Gemini → MiniMax
+ *
+ * Groq leads (fast, generous free tier, LPU speed); NVIDIA NIM follows;
+ * Gemini 3.1 Flash-Lite is the third rung (cheap, high volume); MiniMax-M3
+ * is the final fallback. Fast tasks keep Groq first so cheap quick work does
+ * not consume the higher-priced legs. Operators can reorder the chain per
+ * deployment with ZEESH_SERVER_ROUTING (comma-separated provider ids).
  */
-export const SERVER_ROUTING_PREFERENCE: readonly string[] = ['nvidia', 'groq'];
-export const FAST_ROUTING_PREFERENCE: readonly string[] = ['groq', 'nvidia'];
+export const SERVER_ROUTING_PREFERENCE: readonly string[] = ['groq', 'nvidia', 'gemini', 'minimax'];
+export const FAST_ROUTING_PREFERENCE: readonly string[] = ['groq', 'nvidia', 'gemini', 'minimax'];
 
+/** The provider ids in the routing chain (env override ZEESH_SERVER_ROUTING). */
 export function serverRoutingPreference(tier?: ModelTier): readonly string[] {
+  const override = process.env.ZEESH_SERVER_ROUTING?.trim();
+  if (override) {
+    const ids = override.split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length > 0) return ids;
+  }
   return tier === 'fast' ? FAST_ROUTING_PREFERENCE : SERVER_ROUTING_PREFERENCE;
 }

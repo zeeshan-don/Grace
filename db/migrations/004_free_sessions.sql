@@ -3,9 +3,9 @@
 -- Target: Neon PostgreSQL (any PG 13+).
 --
 -- Adds the `free_sessions` table that enforces the free plan:
---   * 6 sessions per user per day   (session_number 1..6)
+--   * 3 sessions per user per day   (session_number 1..3)
 --   * 60 minutes per session        (started_at → expires_at)
---   * 6 hours/day max               (6 × 60 min)
+--   * 3 hours/day max               (3 × 60 min)
 --
 -- The day bucket (`day`) is the UTC date the session STARTED in
 -- (YYYY-MM-DD). The server is the only writer and the only source of truth:
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS free_sessions (
   -- deliberately UTC so quota behavior is identical for every user regardless
   -- of their timezone ("day" = the server's authoritative UTC day).
   day            TEXT NOT NULL,
-  -- 1-based position in the day (1..N; N = ZEESH_SESSIONS_PER_DAY, default 6).
+  -- 1-based position in the day (1..N; N = ZEESH_SESSIONS_PER_DAY, default 3).
   -- The upper bound is enforced by the service, not the schema, so ops can
   -- tune the limit without a migration.
   session_number INT  NOT NULL CHECK (session_number > 0),

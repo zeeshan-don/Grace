@@ -37,8 +37,15 @@ afterEach(() => {
   delete process.env.DATABASE_URL;
   delete process.env.GROQ_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   delete process.env.ZEESH_SESSIONS_PER_DAY;
   delete process.env.ZEESH_SESSION_DURATION_MINUTES;
+  delete process.env.ZEESH_DAILY_COST_LIMIT_INR;
+  delete process.env.ZEESH_INR_PER_USD;
+  delete process.env.ZEESH_GLOBAL_DAILY_COST_LIMIT_INR;
+  delete process.env.ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR;
   delete process.env.ZEESH_AUTH_RATE_LIMIT_MAX;
   delete process.env.ZEESH_API_RATE_LIMIT_MAX;
   setDbForTests(null);
@@ -119,7 +126,13 @@ function expireAll(mem: MemoryDb, userId: string): MemFreeSession[] {
 async function withStubbedChat<T>(fn: () => Promise<T>): Promise<T> {
   process.env.GROQ_API_KEY = 'gsk_fake_key_for_tests';
   const savedNvidia = process.env.NVIDIA_API_KEY;
+  const savedGemini = process.env.GEMINI_API_KEY;
+  const savedMiniMax = process.env.MINIMAX_API_KEY;
+  const savedDeepSeek = process.env.DEEPSEEK_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
   const original = GroqProvider.prototype.chat;
   GroqProvider.prototype.chat = (async () => ({
     content: 'ok',
@@ -132,6 +145,12 @@ async function withStubbedChat<T>(fn: () => Promise<T>): Promise<T> {
     GroqProvider.prototype.chat = original;
     if (savedNvidia !== undefined) process.env.NVIDIA_API_KEY = savedNvidia;
     else delete process.env.NVIDIA_API_KEY;
+    if (savedGemini !== undefined) process.env.GEMINI_API_KEY = savedGemini;
+    else delete process.env.GEMINI_API_KEY;
+    if (savedMiniMax !== undefined) process.env.MINIMAX_API_KEY = savedMiniMax;
+    else delete process.env.MINIMAX_API_KEY;
+    if (savedDeepSeek !== undefined) process.env.DEEPSEEK_API_KEY = savedDeepSeek;
+    else delete process.env.DEEPSEEK_API_KEY;
     delete process.env.GROQ_API_KEY;
   }
 }
@@ -195,18 +214,18 @@ test('getState computes used/remaining/current from rows without mutating', asyn
   const svc = new FreeSessionService(mem.db, { now: () => fixed });
   const state = await svc.getState('u-1');
   assert.equal(state.sessionsUsed, 3);
-  assert.equal(state.sessionsRemaining, 3);
+  assert.equal(state.sessionsRemaining, 0);
   assert.equal(state.currentSession, 3, 'only the active session is current');
   assert.equal(state.sessionExpiresAt, '2026-08-10T13:00:00.000Z');
   assert.equal(state.dailyUsedSeconds, 3600 + 3600 + 0, 'expired sessions count in full');
-  assert.equal(state.dailyLimitSeconds, 6 * 3600);
+  assert.equal(state.dailyLimitSeconds, 3 * 3600);
   assert.equal(mem.freeSessions.length, 3, 'getState must not mutate');
 });
 
 test('getState caps dailyUsedSeconds at the daily limit and hides an expired current session', async () => {
   const mem = createMemoryDb();
   const fixed = new Date('2026-08-10T12:00:00.000Z');
-  for (let i = 1; i <= 6; i += 1) {
+  for (let i = 1; i <= 3; i += 1) {
     mem.freeSessions.push({
       id: `s${i}`,
       user_id: 'u-1',
@@ -219,10 +238,10 @@ test('getState caps dailyUsedSeconds at the daily limit and hides an expired cur
   }
   const svc = new FreeSessionService(mem.db, { now: () => fixed });
   const state = await svc.getState('u-1');
-  assert.equal(state.sessionsUsed, 6);
+  assert.equal(state.sessionsUsed, 3);
   assert.equal(state.sessionsRemaining, 0);
   assert.equal(state.currentSession, null);
-  assert.equal(state.dailyUsedSeconds, 6 * 3600);
+  assert.equal(state.dailyUsedSeconds, 3 * 3600);
 });
 
 test('ensureActiveSession starts the first session and reuses an active one', async () => {
@@ -233,7 +252,7 @@ test('ensureActiveSession starts the first session and reuses an active one', as
   if (gate1.ok) {
     assert.equal(gate1.startedNew, true);
     assert.equal(gate1.state.currentSession, 1);
-    assert.equal(gate1.state.sessionsRemaining, 5);
+    assert.equal(gate1.state.sessionsRemaining, 2);
   }
   const gate2 = await svc.ensureActiveSession('u-1');
   assert.equal(gate2.ok, true);
@@ -260,10 +279,10 @@ test('ensureActiveSession auto-advances when the current session expired', async
   assert.ok(mem.freeSessions.find((s) => s.session_number === 1)?.ended_at, 'session 1 ended_at set');
 });
 
-test('ensureActiveSession refuses when all 6 sessions are used', async () => {
+test('ensureActiveSession refuses when all 3 sessions are used', async () => {
   const mem = createMemoryDb();
   const svc = new FreeSessionService(mem.db);
-  for (let i = 1; i <= 6; i += 1) {
+  for (let i = 1; i <= 3; i += 1) {
     const g = await svc.ensureActiveSession('u-1');
     assert.equal(g.ok, true, `session ${i} starts`);
     expireAll(mem, 'u-1');
@@ -274,7 +293,7 @@ test('ensureActiveSession refuses when all 6 sessions are used', async () => {
     assert.equal(gate.code, 'daily_limit_exhausted');
     assert.equal(gate.status, 429);
   }
-  assert.equal(mem.freeSessions.length, 6);
+  assert.equal(mem.freeSessions.length, 3);
 });
 
 test('ensureActiveSession retries past a concurrent unique-violation', async () => {
@@ -311,9 +330,9 @@ test('first session: /api/usage starts empty; the first inference starts session
     const before = await usageState(baseUrl, token);
     assert.equal(before.status, 200);
     assert.equal(stateOf(before.body).sessionsUsed, 0);
-    assert.equal(stateOf(before.body).sessionsRemaining, 6);
+    assert.equal(stateOf(before.body).sessionsRemaining, 3);
     assert.equal(stateOf(before.body).currentSession, null);
-    assert.equal(stateOf(before.body).dailyLimitSeconds, 6 * 3600);
+    assert.equal(stateOf(before.body).dailyLimitSeconds, 3 * 3600);
 
     await withStubbedChat(async () => {
       const r = await chat(baseUrl, token);
@@ -327,7 +346,7 @@ test('first session: /api/usage starts empty; the first inference starts session
 
     const after = await usageState(baseUrl, token);
     assert.equal(stateOf(after.body).sessionsUsed, 1);
-    assert.equal(stateOf(after.body).sessionsRemaining, 5);
+    assert.equal(stateOf(after.body).sessionsRemaining, 2);
     assert.equal(stateOf(after.body).currentSession, 1);
   } finally {
     setDbForTests(null);
@@ -360,14 +379,14 @@ test('session expiry: an expired session auto-advances to the second session', a
   }
 });
 
-test('six-session limit: the 7th inference of the day is refused with 429 daily_limit_exhausted', async () => {
+test('three-session limit: the 4th inference of the day is refused with 429 daily_limit_exhausted', async () => {
   const mem = createMemoryDb();
   setDbForTests(mem.db);
   const { server, baseUrl } = await startServer();
   try {
     const { token, userId } = await registerSession(baseUrl, mem);
     await withStubbedChat(async () => {
-      for (let n = 1; n <= 6; n += 1) {
+      for (let n = 1; n <= 3; n += 1) {
         expireAll(mem, userId);
         const r = await chat(baseUrl, token);
         assert.equal(r.status, 200, `session ${n} starts`);
@@ -379,16 +398,16 @@ test('six-session limit: the 7th inference of the day is refused with 429 daily_
       const blocked = await chat(baseUrl, token);
       assert.equal(blocked.status, 429);
       assert.equal(blocked.body.code, 'daily_limit_exhausted');
-      assert.match(String(blocked.body.error), /all 6 free sessions/);
+      assert.match(String(blocked.body.error), /all 3 free sessions/);
       assert.ok(Number(blocked.headers.get('retry-after')) >= 1, 'Retry-After points at the next day');
-      assert.equal(mem.freeSessions.length, 6, 'no 7th session row created');
+      assert.equal(mem.freeSessions.length, 3, 'no 4th session row created');
       // The rejection is self-describing: it carries the current state.
       const rejectedState = blocked.body.session as DailySessionState;
-      assert.equal(rejectedState.sessionsUsed, 6);
+      assert.equal(rejectedState.sessionsUsed, 3);
       assert.equal(rejectedState.sessionsRemaining, 0);
     });
     const after = await usageState(baseUrl, token);
-    assert.equal(stateOf(after.body).sessionsUsed, 6);
+    assert.equal(stateOf(after.body).sessionsUsed, 3);
     assert.equal(stateOf(after.body).sessionsRemaining, 0);
     assert.equal(stateOf(after.body).currentSession, null);
   } finally {
@@ -404,7 +423,7 @@ test('daily reset: a new UTC day refills the quota', async () => {
   try {
     const { token, userId } = await registerSession(baseUrl, mem);
     await withStubbedChat(async () => {
-      for (let n = 1; n <= 6; n += 1) {
+      for (let n = 1; n <= 3; n += 1) {
         expireAll(mem, userId);
         const r = await chat(baseUrl, token);
         assert.equal(r.status, 200);
@@ -423,7 +442,7 @@ test('daily reset: a new UTC day refills the quota', async () => {
     });
     const after = await usageState(baseUrl, token);
     assert.equal(stateOf(after.body).sessionsUsed, 1);
-    assert.equal(stateOf(after.body).sessionsRemaining, 5);
+    assert.equal(stateOf(after.body).sessionsRemaining, 2);
   } finally {
     setDbForTests(null);
     server.close();
@@ -450,7 +469,7 @@ test('multiple requests within a session share one session (no double-start)', a
     const state = await usageState(baseUrl, token);
     assert.equal(stateOf(state.body).sessionsUsed, 1);
     assert.ok(stateOf(state.body).dailyUsedSeconds >= 0);
-    assert.equal(stateOf(state.body).dailyLimitSeconds, 6 * 3600);
+    assert.equal(stateOf(state.body).dailyLimitSeconds, 3 * 3600);
   } finally {
     setDbForTests(null);
     server.close();
@@ -531,7 +550,7 @@ test('GET /api/session/status reports the active session + router provider/model
     assert.equal(s0.status, 'none');
     assert.equal(s0.id, null);
     assert.equal(s0.sessionsUsed, 0);
-    assert.equal(s0.sessionsRemaining, 6);
+    assert.equal(s0.sessionsRemaining, 3);
 
     await withStubbedChat(async () => {
       await chat(baseUrl, token); // starts session 1
@@ -543,7 +562,7 @@ test('GET /api/session/status reports the active session + router provider/model
     assert.equal(s1.status, 'active');
     assert.ok(s1.id, 'active session row id present');
     assert.equal(s1.currentSession, 1);
-    assert.equal(s1.sessionsRemaining, 5);
+    assert.equal(s1.sessionsRemaining, 2);
     assert.ok(s1.expires_at, 'expiry timestamp present');
     assert.equal(typeof s1.provider, 'string', 'router primary provider present');
     assert.equal(typeof s1.model, 'string', 'router model present');
@@ -681,12 +700,12 @@ test('unauthenticated access to usage and provider is refused with 401', async (
 
 const sampleState: DailySessionState = {
   sessionsUsed: 2,
-  sessionsRemaining: 4,
+  sessionsRemaining: 1,
   currentSession: 2,
   sessionStartedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   sessionExpiresAt: new Date(Date.now() + 55 * 60_000).toISOString(),
   dailyUsedSeconds: 600,
-  dailyLimitSeconds: 21_600,
+  dailyLimitSeconds: 10_800,
 };
 
 test('formatCountdown renders compact mm ss from seconds', () => {
@@ -705,25 +724,25 @@ test('sessionSecondsLeft computes remaining display time from expiresAt', () => 
 
 test('sessionStatusLine shows session, time remaining and today\'s usage', () => {
   const line = sessionStatusLine(sampleState);
-  assert.match(line, /Session 2 \/ 6/);
+  assert.match(line, /Session 2 \/ 3/);
   assert.match(line, /left/);
   assert.match(line, /used today/);
-  assert.match(line, /10m \/ 6h used today/);
+  assert.match(line, /10m \/ 3h used today/);
   assert.equal(sessionStatusLine(null), '', 'no state → nothing to print');
 });
 
 test('sessionRolloverNote announces the fresh session; banner line degrades', () => {
   const note = sessionRolloverNote(sampleState);
-  assert.match(note, /Session 2 of 6 started/);
+  assert.match(note, /Session 2 of 3 started/);
 
   const banner = bannerFreePlanLine(sampleState);
-  assert.match(banner, /Session 2\/6/);
+  assert.match(banner, /Session 2\/3/);
 
-  const exhausted: DailySessionState = { ...sampleState, sessionsUsed: 6, sessionsRemaining: 0, currentSession: null, sessionExpiresAt: null, sessionStartedAt: null };
-  assert.match(bannerFreePlanLine(exhausted), /all 6 sessions used/);
+  const exhausted: DailySessionState = { ...sampleState, sessionsUsed: 3, sessionsRemaining: 0, currentSession: null, sessionExpiresAt: null, sessionStartedAt: null };
+  assert.match(bannerFreePlanLine(exhausted), /all 3 sessions used/);
 
-  const fresh: DailySessionState = { ...sampleState, sessionsUsed: 0, sessionsRemaining: 6, currentSession: null, sessionExpiresAt: null, sessionStartedAt: null };
-  assert.match(bannerFreePlanLine(fresh), /6 sessions remaining today/);
+  const fresh: DailySessionState = { ...sampleState, sessionsUsed: 0, sessionsRemaining: 3, currentSession: null, sessionExpiresAt: null, sessionStartedAt: null };
+  assert.match(bannerFreePlanLine(fresh), /3 sessions remaining today/);
   assert.equal(bannerFreePlanLine(null), '', 'not logged in → no banner row');
 });
 
@@ -738,6 +757,79 @@ test('sessionStatusDisplay renders every server state gracefully', () => {
   assert.match(sessionStatusDisplay('unauthorized'), /grace login/);
   // Unknown future states must not crash the CLI.
   assert.equal(sessionStatusDisplay('something_new'), 'something_new');
+});
+
+test('restarting the CLI does not reset the session (server is the only writer)', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const { token, userId } = await registerSession(baseUrl, mem);
+    await withStubbedChat(async () => {
+      await chat(baseUrl, token); // session 1 starts
+      assert.equal(mem.freeSessions.length, 1);
+    });
+
+    // A "new CLI process" is just a fresh service instance hitting the same
+    // server/database — the server state (session 1 active) is untouched.
+    const freshService = new FreeSessionService(mem.db);
+    const state = await freshService.getState(userId);
+    assert.equal(state.sessionsUsed, 1, 'the new process sees the same used count');
+    assert.equal(state.currentSession, 1, 'the active session survives a restart');
+    assert.ok(state.sessionExpiresAt, 'the expiry timestamp survives a restart');
+    assert.equal(mem.freeSessions.length, 1, 'no extra rows were created');
+
+    // The restarted process continues inside the SAME session (no double-start).
+    await withStubbedChat(async () => {
+      const r = await chat(baseUrl, token);
+      const session = (r.body.session ?? {}) as DailySessionState & { startedNew?: boolean };
+      assert.equal(session.currentSession, 1);
+      assert.equal(session.startedNew, false, 'restart must not start a new session');
+    });
+    assert.equal(mem.freeSessions.length, 1);
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
+test('non-AI commands never consume a session (only hosted inference does)', async () => {
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const { token } = await registerSession(baseUrl, mem);
+    // Registration, usage queries and session status are read-only — none of
+    // them may start or consume a session slot.
+    await usageState(baseUrl, token);
+    await usageState(baseUrl, token);
+    await request(baseUrl, '/api/session/status', { token });
+    await request(baseUrl, '/api/session/status', { token });
+    assert.equal(mem.freeSessions.length, 0, 'no session row from non-inference endpoints');
+
+    // A malformed inference request is refused before the gate — no session.
+    const bad = await request(baseUrl, '/api/provider', {
+      method: 'POST',
+      body: { messages: [] },
+      token,
+    });
+    assert.equal(bad.status, 400);
+    assert.equal(mem.freeSessions.length, 0, 'a rejected request consumes no session');
+
+    // A request refused by the daily cost guard consumes no session either.
+    // (0.001 INR ≈ 12 microdollars — below any request's worst-case estimate,
+    // so the guard refuses before any provider call.)
+    process.env.ZEESH_DAILY_COST_LIMIT_INR = '0.001';
+    await withStubbedChat(async () => {
+      const r = await chat(baseUrl, token);
+      assert.equal(r.status, 429);
+      assert.equal(r.body.code, 'daily_cost_exhausted');
+    });
+    assert.equal(mem.freeSessions.length, 0, 'cost-cap refusal must not consume a session');
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
 });
 
 test('session duration is configurable via env (60 minutes by default)', async () => {

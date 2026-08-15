@@ -25,18 +25,25 @@ available in this environment.
   - `rateLimit.ts` — sliding-window rate limiter (auth + API scopes; fails
     safe: invalid env config falls back to sane defaults).
   - `providers.ts` — server-side provider layer / Model Router
-    (`createServerRouter`): NVIDIA NIM primary → Groq fallback, built per
-    request. Provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`) never leave the
-    server; failures are classified (`authentication` / `rate_limit` /
-    `timeout` / `unavailable_model` / `malformed_response` / `network`) and
-    returned to clients as secret-safe messages.
+    (`createServerRouter`): Groq → NVIDIA NIM → Gemini → MiniMax fallback
+    chain, built per request (reorderable via `ZEESH_SERVER_ROUTING`).
+    Provider keys (`GROQ_API_KEY`, `NVIDIA_API_KEY`, `GEMINI_API_KEY`,
+    `MINIMAX_API_KEY`) never leave the server; failures are classified
+    (`authentication` / `rate_limit` / `quota_exhausted` / `timeout` /
+    `unavailable_model` / `server_error` / `malformed_response` / `network`)
+    and returned to clients as secret-safe messages.
+  - `costGuard.ts` — Grace Free internal cost guard: the per-user daily
+    ceiling (`ZEESH_DAILY_COST_LIMIT_INR`, default ₹20) and the global
+    circuit breaker, enforced with race-safe budget reservations before any
+    paid request (`daily_cost` / `global_cost` ledgers, migration
+    `005_cost_guard.sql`).
   - `middleware.ts` — `withHttp`: CORS + preflight, secret-safe 500s and
     request logging, applied on Vercel (`api/*.ts`) and locally (`router.ts`).
   - `beta.ts` — closed-beta gate (`ZEESH_BETA_MODE` / `ZEESH_BETA_ALLOWLIST`).
   - `log.ts` — safe request logging (secrets scrubbed before output).
   - `db.ts` — Neon PostgreSQL client (`DATABASE_URL`), created lazily.
   - `usage.ts` — usage-recording service (`agent_runs` + `usage` rows).
-  - `freeSessions.ts` — GRACE FREE daily session service (6 sessions/day × 60
+  - `freeSessions.ts` — GRACE FREE daily session service (3 sessions/day × 60
     min, server-enforced; `free_sessions` table, migration `004_free_sessions.sql`).
   - `router.ts` + `server.ts` — local dev server over `node:http`.
 - `api/*.ts` and `api/auth/*.ts` — thin Vercel zero-config serverless functions
@@ -134,12 +141,12 @@ state** (Milestone 13):
 {
   "usage": [ { "id": 1, "model": "openai/gpt-oss-120b", "input_tokens": 4520, "output_tokens": 890, "created_at": "…" } ],
   "sessionsUsed": 2,
-  "sessionsRemaining": 4,
+  "sessionsRemaining": 1,
   "currentSession": 2,
   "sessionStartedAt": "2026-08-10T09:00:00.000Z",
   "sessionExpiresAt": "2026-08-10T10:00:00.000Z",
   "dailyUsedSeconds": 5400,
-  "dailyLimitSeconds": 21600
+  "dailyLimitSeconds": 10800
 }
 ```
 
@@ -169,24 +176,45 @@ The response also reports which provider **actually served** the request
 | Failure | Response |
 | ------- | -------- |
 | authentication (bad server-side key) | `502` — "rejected the server-side API key" |
-| rate limit | `429` — wait and retry |
+| rate limit / quota exhausted | `429` — wait and retry (the router tries the next provider automatically) |
 | timeout | `504` — retry |
 | unavailable model | `502` — pick a different model |
-| malformed response / network / other | `502` — generic retry hint |
+| provider outage / server error / malformed response / network / other | `502` — generic retry hint |
+
+Only **provider-level** failures activate the router chain. Task/model/tool
+errors (malformed tool arguments, failed commands, a difficult question)
+never surface from the provider boundary, so they can never trigger a
+provider switch — they are handled inside the agent.
 
 Error text is server-authored and never contains a provider key; raw provider
 detail is scrubbed (`nvapi-…`, `sk-…`, `gsk_…`) before it reaches logs.
 
-**Free-plan gate (Milestone 13):** before any model call, the server runs the
-daily session gate (`src/api/freeSessions.ts`):
+**Cost guard (Milestone 18):** before the session gate, the server runs the
+internal cost guard (`src/api/costGuard.ts`): it estimates the worst-case
+cost of the request across the provider chain, caps the request's max output
+tokens to the remaining daily budget (₹20/day/user default), and reserves
+that budget atomically in Neon (race-safe — concurrent requests can never
+overshoot). If the budget is exhausted the request is refused with
+`429 { "code": "daily_cost_exhausted" }` and *"Grace has reached today's
+usage capacity. Please try again after the daily reset."* — **no session slot
+is consumed** by a refused request. After the model call the guard settles
+the actual cost, releases the unused reservation and records the request in
+`ai_usage`. The global circuit breaker
+(`ZEESH_GLOBAL_DAILY_COST_LIMIT_INR` / `ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR`)
+refuses with `global_cost_exhausted` ("Grace is temporarily at capacity…")
+when reached. Users never see spending, tokens or provider economics.
+
+**Free-plan gate (Milestone 13):** after the cost guard, the daily session
+gate runs (`src/api/freeSessions.ts`):
 
 - No active session + quota remains → a session is **auto-started** (the
   response's `session.startedNew` is `true`, telling the CLI a rollover
   happened).
 - Active session → the request runs inside it (`startedNew: false`).
-- All 6 sessions for the day used → `429` with
+- All 3 sessions for the day used → `429` with
   `{ "error": "…", "code": "daily_limit_exhausted" }` and a `Retry-After`
-  header pointing at the next UTC day. No provider call is made.
+  header pointing at the next UTC day. No provider call is made (and the
+  cost reservation is released).
 
 The response embeds the same state as `GET /api/usage` (`sessionsUsed`,
 `sessionsRemaining`, `currentSession`, `sessionStartedAt`, `sessionExpiresAt`,
@@ -202,10 +230,11 @@ The response embeds the same state as `GET /api/usage` (`sessionsUsed`,
 - Sessions expire after 30 days (`sessions.expires_at`); expired/invalid tokens
   get `401`.
 
-## Free plan — daily sessions (Milestone 13)
+## Free plan — daily sessions (Milestone 13) + cost guard (Milestone 18)
 
 GRACE FREE quotas are **backend-authoritative**. See the
 [Free plan section in the README](../README.md#free-plan--daily-sessions-milestone-13-grace-free)
+and [Grace Free economics](../README.md#grace-free-economics--cost-protection)
 for the product rules; the API surface is:
 
 - `free_sessions` rows (Neon, `004_free_sessions.sql`): `user_id`, UTC `day`,
@@ -216,7 +245,7 @@ for the product rules; the API surface is:
   **00:00 UTC** for every user.
 - Expiry is detected lazily on each request — no background job needed.
 - A day's `dailyUsedSeconds` sums each session's elapsed time, capped at its
-  own 60-minute length and at the 6-hour daily cap.
+  own 60-minute length and at the 3-hour daily cap.
 
 ## Rate limiting
 
@@ -239,8 +268,11 @@ local agent. A shared store (Redis/Upstash) is recommended before public beta
 
 | Variable | Where | Purpose |
 | -------- | ----- | ------- |
-| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **fallback** provider for `/api/provider` |
-| `NVIDIA_API_KEY` | API only | Server-side **primary** provider (NVIDIA NIM) for `/api/provider` — never sent to the CLI |
+| `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **primary** provider for `/api/provider` |
+| `NVIDIA_API_KEY` | API only | Server-side provider (NVIDIA NIM) — never sent to the CLI |
+| `GEMINI_API_KEY` | API only | Server-side fallback provider (Gemini, `gemini-3.1-flash-lite`) — never sent to the CLI |
+| `MINIMAX_API_KEY` | API only | Server-side fallback provider (MiniMax-M3, last in the chain) — never sent to the CLI |
+| `DEEPSEEK_API_KEY` | API only | Optional DeepSeek provider leg — never sent to the CLI |
 | `DATABASE_URL` | API only | Neon PostgreSQL connection string (required for auth + usage) |
 | `ZEESH_API_URL` | CLI only | Backend URL the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
 | `ZEESH_BETA_MODE` | API only | `closed` gates registration behind the allowlist (default `open`) |
@@ -248,8 +280,14 @@ local agent. A shared store (Redis/Upstash) is recommended before public beta
 | `ZEESH_CORS_ORIGIN` | API only | Browser origin allowed to call the API (default `*`) |
 | `ZEESH_AUTH_RATE_LIMIT_MAX` | API only | Auth rate-limit budget (default 50/15 min) |
 | `ZEESH_API_RATE_LIMIT_MAX` | API only | API rate-limit budget (default 300/min) |
-| `ZEESH_SESSIONS_PER_DAY` | API only | Free-plan sessions per user per day (default 6) |
+| `ZEESH_SESSIONS_PER_DAY` | API only | Free-plan sessions per user per day (default 3) |
 | `ZEESH_SESSION_DURATION_MINUTES` | API only | Free-plan session length (default 60) |
+| `ZEESH_SERVER_ROUTING` | API only | Provider chain order override (comma-separated ids) |
+| `ZEESH_DAILY_COST_LIMIT_INR` | API only | Internal per-user daily cost ceiling (default ₹20; 0 disables) |
+| `ZEESH_INR_PER_USD` | API only | INR→USD rate for the ceiling (default 83) |
+| `ZEESH_GLOBAL_DAILY_COST_LIMIT_INR` | API only | Global circuit breaker per UTC day (default 0 = off) |
+| `ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR` | API only | Global circuit breaker per UTC month (default 0 = off) |
+| `ZEESH_PRICING_JSON` | API only | Optional per-model price overrides (see `.env.example`) |
 
 Placeholders in [`.env.example`](../.env.example). `.env` and other secret
 files are git-ignored.
@@ -295,8 +333,9 @@ Notes:
 
 ## Security notes (current state)
 
-- Provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`) and `DATABASE_URL` are
-  server-side only and never reach the CLI or browser.
+- Provider keys (`GROQ_API_KEY`, `NVIDIA_API_KEY`, `GEMINI_API_KEY`,
+  `MINIMAX_API_KEY`) and `DATABASE_URL` are server-side only and never reach
+  the CLI or browser.
 - Passwords are scrypt-hashed with a per-user salt; plaintext is never stored,
   logged, or returned.
 - Sessions store only the SHA-256 hash of the token; tokens expire after 30

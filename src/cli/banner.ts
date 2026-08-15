@@ -15,7 +15,7 @@ import { symbols, theme } from './ui/theme.ts';
  *   ╰─────────────────────────────╯
  *   Directory  D:\Projects\my-app
  *   Provider   NVIDIA NIM
- *   Model      qwen/qwen2.5-coder-32b-instruct
+ *   Model      openai/gpt-oss-20b
  *   Session    logged in as user@example.com · 58m remaining
  *   Quota      5 sessions remaining
  *

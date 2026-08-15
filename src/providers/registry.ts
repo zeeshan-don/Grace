@@ -1,5 +1,7 @@
 import { DeepSeekProvider } from './deepseek.ts';
+import { GeminiProvider } from './gemini.ts';
 import { GroqProvider } from './groq.ts';
+import { MiniMaxProvider } from './minimax.ts';
 import { NvidiaProvider } from './nvidia.ts';
 import type { AIProvider } from './types.ts';
 
@@ -11,8 +13,9 @@ export interface ProviderFactoryOptions {
 /**
  * Create an AI provider by id.
  *
- * Extension points (Milestone 9): implement `AIProvider` and register it here.
- * Planned ids: gemini, anthropic, openai, ollama.
+ * Implemented: groq, nvidia, deepseek, gemini, minimax (all real providers —
+ * see each file for its API). Extension points remain for anthropic, openai,
+ * ollama.
  */
 export function createProvider(id: string, opts: ProviderFactoryOptions): AIProvider {
   switch (id) {
@@ -22,11 +25,15 @@ export function createProvider(id: string, opts: ProviderFactoryOptions): AIProv
       return new NvidiaProvider({ apiKey: opts.apiKey, model: opts.model });
     case 'deepseek':
       return new DeepSeekProvider({ apiKey: opts.apiKey, model: opts.model });
+    case 'gemini':
+      return new GeminiProvider({ apiKey: opts.apiKey, model: opts.model });
+    case 'minimax':
+      return new MiniMaxProvider({ apiKey: opts.apiKey, model: opts.model });
     default:
       throw new Error(
-        `Unknown provider "${id}". Implemented: groq, nvidia, deepseek. (Extension points exist for gemini, anthropic, openai, ollama — not yet wired.)`,
+        `Unknown provider "${id}". Implemented: groq, nvidia, deepseek, gemini, minimax. (Extension points exist for anthropic, openai, ollama — not yet wired.)`,
       );
   }
 }
 
-export const SUPPORTED_PROVIDERS = ['groq', 'nvidia', 'deepseek'] as const;
+export const SUPPORTED_PROVIDERS = ['groq', 'nvidia', 'deepseek', 'gemini', 'minimax'] as const;

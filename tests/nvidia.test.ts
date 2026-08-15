@@ -182,6 +182,24 @@ test('NvidiaProvider maps 404 and 5xx to unavailable_model', async () => {
   );
 });
 
+test('NvidiaProvider maps 410 Gone (end-of-life model) to unavailable_model', async () => {
+  // NVIDIA returns problem-details payloads (type/title/status/detail — no
+  // `error` key) for model rejection, e.g. an EOL model. This must classify
+  // as unavailable_model so the router falls back instead of surfacing it.
+  stubFetch(() =>
+    jsonReply(410, {
+      type: 'https://api.nvidia.com/errors/model-not-found',
+      title: 'Gone',
+      status: 410,
+      detail: "The model 'qwen/qwen2.5-coder-32b-instruct' has reached its end of life and is no longer available.",
+    }),
+  );
+  await assert.rejects(
+    () => makeProvider().chat(msgs),
+    (err: unknown) => err instanceof ProviderError && err.category === 'unavailable_model',
+  );
+});
+
 test('NvidiaProvider maps an unparseable response to malformed_response', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = (async () => new Response('<!DOCTYPE html>', { status: 200 })) as typeof fetch;
@@ -228,19 +246,19 @@ test('NvidiaProvider.streamChat replays content, tool calls and usage as events'
 });
 
 test('NvidiaProvider.listModels lists ids from GET /models and degrades to []', async () => {
-  stubFetch(() => jsonReply(200, { data: [{ id: 'qwen/qwen2.5-coder-32b-instruct' }, { id: 'deepseek-ai/deepseek-r1' }] }));
+  stubFetch(() => jsonReply(200, { data: [{ id: 'openai/gpt-oss-20b' }, { id: 'nvidia/llama-3.3-nemotron-super-49b-v1.5' }] }));
   const models = await makeProvider().listModels();
-  assert.deepEqual(models, ['deepseek-ai/deepseek-r1', 'qwen/qwen2.5-coder-32b-instruct']);
+  assert.deepEqual(models, ['nvidia/llama-3.3-nemotron-super-49b-v1.5', 'openai/gpt-oss-20b']);
 
   stubFetch(() => jsonReply(500, { error: { message: 'boom' } }));
   assert.deepEqual(await makeProvider().listModels(), []);
 });
 
 test('NvidiaProvider.getModel/setModel expose the configured model', () => {
-  const provider = makeProvider({ model: 'deepseek-ai/deepseek-r1' });
-  assert.equal(provider.getModel().id, 'deepseek-ai/deepseek-r1');
-  provider.setModel('qwen/qwen2.5-coder-32b-instruct');
-  assert.equal(provider.getModel().id, 'qwen/qwen2.5-coder-32b-instruct');
+  const provider = makeProvider({ model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5' });
+  assert.equal(provider.getModel().id, 'nvidia/llama-3.3-nemotron-super-49b-v1.5');
+  provider.setModel('openai/gpt-oss-20b');
+  assert.equal(provider.getModel().id, 'openai/gpt-oss-20b');
   assert.equal(provider.id, 'nvidia');
   assert.ok(provider.label.includes('NVIDIA'));
 });

@@ -5,9 +5,9 @@
  * session state, so restarting it or deleting local files can never reset the
  * daily quota:
  *
- *   * 6 sessions per user per day        (ZEESH_SESSIONS_PER_DAY, default 6)
+ *   * 3 sessions per user per day        (ZEESH_SESSIONS_PER_DAY, default 3)
  *   * 60 minutes per session             (ZEESH_SESSION_DURATION_MINUTES, default 60)
- *   * 6 hours / day max                  (sessionsPerDay × sessionDuration)
+ *   * 3 hours / day max                  (sessionsPerDay × sessionDuration)
  *   * day boundary = 00:00 UTC           (server-authoritative, timezone-independent)
  *
  * State lives in Neon `free_sessions` (db/migrations/004_free_sessions.sql):
@@ -28,7 +28,7 @@
 import type { Db, Row } from './db.ts';
 
 /** Default free-plan limits (overridable per deployment via env, like rate limits). */
-export const DEFAULT_SESSIONS_PER_DAY = 6;
+export const DEFAULT_SESSIONS_PER_DAY = 3;
 export const DEFAULT_SESSION_DURATION_MS = 60 * 60 * 1000; // 60 minutes
 
 /** A row of `free_sessions` as read by this service. */
@@ -200,7 +200,7 @@ export class FreeSessionService {
             `You have used all ${limit} free sessions for today (${Math.round((limit * this.sessionDurationMs) / 3_600_000)}h max). ` +
             'New sessions unlock at 00:00 UTC. Thanks for using GRACE FREE.',
           // The state rides along so the rejection is self-describing (the
-          // CLI can render "Session 6/6" from the 429 itself).
+          // CLI can render "Session 3/3" from the 429 itself).
           state: this.computeState(rows, now),
         };
       }
