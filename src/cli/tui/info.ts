@@ -57,6 +57,9 @@ export async function refreshFreePlan(runtime: Runtime): Promise<string | undefi
   if (!(runtime.provider instanceof RemoteProvider)) return undefined;
   try {
     const state = await new ApiClient(stored.apiUrl, 2000).getUsage(stored.token);
+    // Seed the shared session view so the live countdown renders even before
+    // the first task (display only — the server enforces the session limit).
+    RemoteProvider.setSharedSession(state);
     return stripAnsi(bannerFreePlanLine(state));
   } catch {
     return undefined;

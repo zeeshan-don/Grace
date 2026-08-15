@@ -137,6 +137,15 @@ export class RemoteProvider implements AIProvider {
     return sharedState.session;
   }
 
+  /**
+   * Seed the shared view from a non-provider source (e.g. GET /api/usage)
+   * so the live session countdown renders even before the first task.
+   * Display only — the server remains the source of truth.
+   */
+  static setSharedSession(state: LastSessionInfo | null): void {
+    sharedState.session = state;
+  }
+
   /** Freshest serving-provider report across all instances (see sharedSession). */
   static sharedServerProvider(): { id: string; label: string } | null {
     return sharedState.serverProvider;

@@ -13,6 +13,8 @@
 import { createElement as h, useEffect, useState, type ReactNode } from 'react';
 import { Box, Text, useWindowSize } from 'ink';
 import { supportsUnicode, symbols } from '../ui/theme.ts';
+import { formatCountdown, formatDailyUsage, sessionSecondsLeft } from '../freePlan.ts';
+import { RemoteProvider } from '../../providers/remote.ts';
 import { chooseLogoFor, wordmark } from './logo.ts';
 import { HOME_SHORTCUTS, SLASH_COMMANDS } from './commands.ts';
 import type { TuiStore } from './store.ts';
@@ -67,6 +69,26 @@ export function Spinner({ label }: { label: string }): ReactNode {
   return h(Text, { color: 'cyan' }, `${frames[frame % frames.length] ?? frames[0] ?? '·'} ${label}`);
 }
 
+/**
+ * Live countdown of the current GRACE FREE session's remaining time. Ticks
+ * once per second; hidden when no session is active (local mode, not logged
+ * in, or the backend has not reported one yet). Display only — the server
+ * enforces the session limit.
+ */
+export function SessionTimer(): ReactNode {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const expiresAt = RemoteProvider.sharedSession()?.sessionExpiresAt;
+  const left = sessionSecondsLeft(expiresAt);
+  if (left === null) return null;
+  const clock = supportsUnicode() ? '⏱ ' : '';
+  const label = left <= 0 ? 'session expired' : `${formatCountdown(left)} left`;
+  return h(Text, { color: 'yellow', dimColor: true }, `${clock}${label}`);
+}
+
 /** Centered overlay frame (dialogs, pickers, help, login). */
 function Overlay({ children, title }: { children?: ReactNode; title?: string }): ReactNode {
   const top = h(Text, { bold: true, color: 'cyan' }, title ?? '');
@@ -99,6 +121,7 @@ export function TaskHeader({ store }: { store: TuiStore }): ReactNode {
       { flexDirection: 'row' },
       h(Text, { bold: true, color: 'cyan', dimColor: true }, wordmark()),
       h(Box, { flexGrow: 1 }),
+      columns >= 76 ? h(SessionTimer, {}) : null,
       model ? h(Text, { color: 'gray', dimColor: true }, fit(model, 44)) : null,
     ),
     lastUser
@@ -296,11 +319,27 @@ export function StatusRow({ store }: { store: TuiStore }): ReactNode {
   ];
   const W = Math.max(12, Math.floor(Math.min(columns - 8, 96) / 4));
 
-  // GRACE FREE quota from the backend (real, best-effort). Quiet, and only on
+  // GRACE FREE quota from the backend (real, best-effort). When a session is
+  // active the countdown is LIVE (ticks every second); the static line covers
+  // the "N sessions remaining" / "all used" cases instead. Quiet, and only on
   // wide screens — narrow/short terminals collapse it (see /status).
-  const quota = info.freePlan
-    ? h(Box, { marginTop: 1 }, h(Text, { color: 'gray', dimColor: true }, fit(info.freePlan, Math.max(16, columns - 4))))
-    : null;
+  const sessionState = RemoteProvider.sharedSession();
+  const quota =
+    sessionState && sessionSecondsLeft(sessionState.sessionExpiresAt) !== null
+      ? h(
+          Box,
+          { flexDirection: 'row', marginTop: 1 },
+          h(
+            Text,
+            { color: 'gray', dimColor: true },
+            `Quota · Session ${sessionState.currentSession ?? sessionState.sessionsUsed}/${sessionState.sessionsUsed + sessionState.sessionsRemaining} · `,
+          ),
+          h(SessionTimer, {}),
+          h(Text, { color: 'gray', dimColor: true }, ` · ${formatDailyUsage(sessionState.dailyUsedSeconds)} used today`),
+        )
+      : info.freePlan
+        ? h(Box, { marginTop: 1 }, h(Text, { color: 'gray', dimColor: true }, fit(info.freePlan, Math.max(16, columns - 4))))
+        : null;
 
   return h(
     Box,

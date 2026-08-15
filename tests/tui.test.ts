@@ -16,7 +16,8 @@ import { TuiStore } from '../src/cli/tui/store.ts';
 import { friendlyTool } from '../src/cli/tui/runner.ts';
 import { SLASH_COMMANDS } from '../src/cli/tui/commands.ts';
 import { discoverModels, discoverProviders } from '../src/cli/tui/models.ts';
-import { HomeScreen, ActivityPanel, InputLine } from '../src/cli/tui/components.ts';
+import { HomeScreen, TaskHeader, ActivityPanel, InputLine } from '../src/cli/tui/components.ts';
+import { RemoteProvider, resetSharedRemoteState } from '../src/providers/remote.ts';
 import type { TuiInfo } from '../src/cli/tui/types.ts';
 
 const SAVED_ENV: Record<string, string | undefined> = {};
@@ -317,3 +318,55 @@ test('render: input line shows the typed text and a placeholder when empty', () 
   assert.match(out, /fix the login/);
   assert.match(out, /›/, 'the input prompt is a chevron, not a fake box');
 });
+
+// ---------------------------------------------------------------------------
+// Live session countdown (GRACE FREE)
+// ---------------------------------------------------------------------------
+
+function activeSession(): NonNullable<ReturnType<typeof RemoteProvider.sharedSession>> {
+  return {
+    sessionsUsed: 2,
+    sessionsRemaining: 1,
+    currentSession: 2,
+    sessionStartedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    sessionExpiresAt: new Date(Date.now() + 47 * 60_000 + 12_000).toISOString(),
+    dailyUsedSeconds: 1800,
+    dailyLimitSeconds: 10_800,
+  };
+}
+
+test('render: home status row shows a LIVE session countdown when a session is active', () => {
+  resetSharedRemoteState();
+  RemoteProvider.setSharedSession(activeSession());
+  try {
+    const s = new TuiStore(info());
+    const out = renderToString(h(HomeScreen, { store: s }), { columns: 80 });
+    assert.match(out, /Quota · Session 2\/3/, 'sessions come from the real server state');
+    assert.match(out, /47m 12s left/, 'live countdown renders the remaining time');
+    assert.match(out, /30m used today/, 'daily usage still shown');
+  } finally {
+    resetSharedRemoteState();
+  }
+});
+
+test('render: no session state means no countdown (local mode / offline)', () => {
+  resetSharedRemoteState();
+  const s = new TuiStore(info());
+  const out = renderToString(h(HomeScreen, { store: s }), { columns: 80 });
+  assert.ok(!out.includes('left'), 'no countdown without an active session');
+});
+
+test('render: task header shows the live countdown on wide terminals', () => {
+  resetSharedRemoteState();
+  RemoteProvider.setSharedSession(activeSession());
+  try {
+    const s = new TuiStore(info());
+    s.mode = 'session';
+    const out = renderToString(h(TaskHeader, { store: s }), { columns: 100 });
+    assert.match(out, /47m 12s left/, 'countdown in the session header');
+  } finally {
+    resetSharedRemoteState();
+  }
+});
+
+

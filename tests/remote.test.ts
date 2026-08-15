@@ -171,6 +171,24 @@ test('RemoteProvider shares the freshest session/provider state across instances
   assert.equal(scout.lastSession, null);
 });
 
+test('RemoteProvider.setSharedSession seeds the shared view (display only)', () => {
+  resetSharedRemoteState();
+  assert.equal(RemoteProvider.sharedSession(), null);
+  RemoteProvider.setSharedSession({
+    sessionsUsed: 1,
+    sessionsRemaining: 2,
+    currentSession: 1,
+    sessionStartedAt: '2026-08-10T09:00:00.000Z',
+    sessionExpiresAt: '2026-08-10T09:55:00.000Z',
+    dailyUsedSeconds: 120,
+    dailyLimitSeconds: 10_800,
+  });
+  assert.equal(RemoteProvider.sharedSession()?.currentSession, 1);
+  assert.equal(RemoteProvider.sharedSession()?.sessionExpiresAt, '2026-08-10T09:55:00.000Z');
+  resetSharedRemoteState();
+  assert.equal(RemoteProvider.sharedSession(), null, 'clears again');
+});
+
 test('RemoteProvider.chat tolerates missing optional fields in the response', async () => {
   const mock = await startMock(() => ({ status: 200, body: { content: 'ok' } }));
   const provider = new RemoteProvider({ apiUrl: mock.baseUrl, token: 'tok' });
