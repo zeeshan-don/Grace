@@ -138,7 +138,7 @@ function usage(): string {
     'Environment:',
     '  GROQ_API_KEY     Your Groq API key (optional when logged in — the backend provides the model)',
     '  NVIDIA_API_KEY   Server-side only (Vercel env) — never needed on the CLI',
-    '  ZEESH_API_URL    GRACE backend URL (default http://localhost:8787)',
+    '  ZEESH_API_URL    GRACE backend URL (default https://zeesh-ai.vercel.app; set to http://localhost:8787 for local dev)',
     '  ZEESH_SHELL      Override the shell used by run_command',
     '  NO_COLOR         Disable ANSI colors',
   ].join('\n');

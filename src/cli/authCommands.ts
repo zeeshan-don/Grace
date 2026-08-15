@@ -7,7 +7,7 @@
  * Whoami shows the authenticated identity, validating against the server
  * when reachable and degrading to the cached session when offline.
  */
-import { zeeshApiUrl } from '../config/config.ts';
+import { isLocalBackend, zeeshApiUrl } from '../config/config.ts';
 import { ApiClient, ApiError } from '../auth/client.ts';
 import { clearSession, loadSession, saveSession, sessionExpired, type StoredSession } from '../auth/session.ts';
 import { c } from './colors.ts';
@@ -17,7 +17,13 @@ import { promptHidden, promptText } from './input.ts';
 export async function cmdLogin(arg: string): Promise<number> {
   const existing = loadSession();
   const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
-  console.log(c.dim(`GRACE backend: ${apiUrl}`));
+  console.log(
+    c.dim(
+      isLocalBackend(apiUrl)
+        ? `GRACE backend: ${apiUrl} (local dev — set ZEESH_API_URL to the deployed backend for production)`
+        : `GRACE backend: ${apiUrl}`,
+    ),
+  );
 
   const email = (arg.trim() || (await promptText(c.bold('Email: ')))).trim();
   const password = await promptHidden(c.bold('Password: '));
@@ -49,7 +55,13 @@ export async function cmdLogin(arg: string): Promise<number> {
 export async function cmdRegister(arg: string): Promise<number> {
   const existing = loadSession();
   const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
-  console.log(c.dim(`GRACE backend: ${apiUrl}`));
+  console.log(
+    c.dim(
+      isLocalBackend(apiUrl)
+        ? `GRACE backend: ${apiUrl} (local dev — set ZEESH_API_URL to the deployed backend for production)`
+        : `GRACE backend: ${apiUrl}`,
+    ),
+  );
 
   const email = (arg.trim() || (await promptText(c.bold('Email: ')))).trim();
   const password = await promptHidden(c.bold('Password: '));

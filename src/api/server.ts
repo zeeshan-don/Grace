@@ -32,6 +32,16 @@ const isMain = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[
 
 if (isMain) {
   loadEnv(process.cwd());
+  if (!process.env.DATABASE_URL?.trim()) {
+    // Local dev without a database: auth/usage endpoints will return 503. Warn
+    // loudly instead of failing silently — DATABASE_URL is server-side only
+    // (never read by the CLI), so it belongs in .env here or in the Vercel
+    // project environment for deployments.
+    console.warn(
+      'Warning: DATABASE_URL is not set — auth and usage endpoints will return 503. ' +
+        'Add it to .env (local dev) or the Vercel environment (production).',
+    );
+  }
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const server = startApiServer(port);
   server.on('listening', () => {

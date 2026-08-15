@@ -216,6 +216,42 @@ test('database failures surface as a generic 500 without leaking internals', asy
   }
 });
 
+test('missing DB tables (unapplied migration) surface as a clear 503, not a 500', async () => {
+  // A provider key lets the cost guard reach the cost tables (with no key it
+  // would refuse earlier with the "no providers" 503 and never touch them).
+  process.env.GROQ_API_KEY = 'gsk_test_key_123';
+  const mem = createMemoryDb();
+  setDbForTests(mem.db);
+  const { server, baseUrl } = await startServer();
+  try {
+    const token = await registerSession(baseUrl, 'migrate@example.com');
+
+    // Simulate a Postgres 42P01 (undefined_table) — the exact failure a
+    // production DB hit before db/migrations/005_cost_guard.sql was applied.
+    setDbForTests((async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('daily_cost')) {
+        const err = new Error('relation "daily_cost" does not exist') as Error & { code: string };
+        err.code = '42P01';
+        throw err;
+      }
+      return mem.db(sql, params);
+    }) as unknown as Db);
+
+    const r = await request(baseUrl, '/api/provider', {
+      method: 'POST',
+      body: { messages: [{ role: 'user', content: 'hi' }] },
+      token,
+    });
+    assert.equal(r.status, 503, 'schema-missing errors are actionable 503s, not silent 500s');
+    const text = JSON.stringify(r.body);
+    assert.ok(!text.includes('daily_cost'), 'raw SQL identifiers never reach clients');
+    assert.match((r.body as { error: string }).error, /migrations/, 'response points ops at the migrations');
+  } finally {
+    setDbForTests(null);
+    server.close();
+  }
+});
+
 test('register/usage validation failures keep designed messages (no stack traces)', async () => {
   const mem = createMemoryDb();
   setDbForTests(mem.db);

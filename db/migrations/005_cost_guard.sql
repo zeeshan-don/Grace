@@ -25,7 +25,9 @@
 CREATE TABLE IF NOT EXISTS ai_usage (
   id                        BIGSERIAL PRIMARY KEY,
   user_id                   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  session_id                UUID REFERENCES sessions(id) ON DELETE SET NULL,
+  -- The GRACE FREE session row the request ran inside (src/api/costGuard.ts
+  -- passes free_sessions.id — NOT the auth sessions.id).
+  session_id                UUID REFERENCES free_sessions(id) ON DELETE SET NULL,
   provider                  TEXT NOT NULL,
   model                     TEXT NOT NULL,
   input_tokens              INT  NOT NULL DEFAULT 0,

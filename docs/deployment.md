@@ -91,15 +91,21 @@ session token.
 
 ### CLI-side configuration (each tester)
 
-The CLI reads `ZEESH_API_URL` to know which backend to log in to. In production
-every tester should point it at the deployed backend:
+The CLI reads `ZEESH_API_URL` to know which backend to log in to. **It now
+defaults to the deployed production backend** (`https://zeesh-ai.vercel.app`),
+so no configuration is needed to use production:
 
 ```bash
-# per machine, in ~/.zeesh/env
-ZEESH_API_URL=https://zeesh-ai.vercel.app
+grace login   # → "GRACE backend: https://zeesh-ai.vercel.app"
 ```
 
-If unset, the CLI defaults to `http://localhost:8787` (local dev only).
+Set `ZEESH_API_URL` **only** to opt into local development against
+`npm run serve`:
+
+```bash
+# per machine, in ~/.zeesh/env (or project .env)
+ZEESH_API_URL=http://localhost:8787   # local dev only
+```
 
 ## 4. Database migration
 

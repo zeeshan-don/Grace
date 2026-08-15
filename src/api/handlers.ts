@@ -23,6 +23,13 @@ import { FreeSessionService, secondsUntilUtcMidnight, type DailySessionState, ty
 import { isObject, methodNotAllowed, type ApiHandler, type ApiRequest, type ApiResponse } from './types.ts';
 import { UsageError, UsageService, type UsageReport } from './usage.ts';
 
+/**
+ * 503 body when the server has no DATABASE_URL. Never reveals the value or
+ * any other secret — just states what is missing and how to fix it.
+ */
+const DB_NOT_CONFIGURED =
+  'DATABASE_URL is not configured on the server. Add it to the server environment (Vercel: Project → Settings → Environment Variables, or .env for the local dev server) and redeploy.';
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
@@ -60,7 +67,7 @@ export const healthHandler: ApiHandler = async (req, res) => {
 export const registerHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const rate = checkRateLimit('auth', `${clientIp(req.headers)}:register`);
   if (!rate.ok) return tooManyRequests(res, rate.retryAfterSeconds);
   if (!isObject(req.body)) return res.status(400).json({ error: 'Request body must be a JSON object.' });
@@ -93,7 +100,7 @@ export const registerHandler: ApiHandler = async (req, res) => {
 export const loginHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const rate = checkRateLimit('auth', `${clientIp(req.headers)}:login`);
   if (!rate.ok) return tooManyRequests(res, rate.retryAfterSeconds);
   if (!isObject(req.body)) return res.status(400).json({ error: 'Request body must be a JSON object.' });
@@ -113,7 +120,7 @@ export const loginHandler: ApiHandler = async (req, res) => {
 export const logoutHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
@@ -125,7 +132,7 @@ export const logoutHandler: ApiHandler = async (req, res) => {
 export const meHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
@@ -145,7 +152,7 @@ export const usageHandler: ApiHandler = async (req, res) => {
 
 async function recordUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
   const rate = checkRateLimit('api', `${clientIp(req.headers)}:usage`);
@@ -177,7 +184,7 @@ async function recordUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
 
 async function listUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
@@ -208,7 +215,7 @@ async function listUsage(req: ApiRequest, res: ApiResponse): Promise<void> {
 export const sessionStatusHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
@@ -238,7 +245,7 @@ export const sessionStatusHandler: ApiHandler = async (req, res) => {
 export const endSessionHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
@@ -286,7 +293,7 @@ function sessionStatusLabel(last: FreeSessionRow | null, state: DailySessionStat
 export const providerHandler: ApiHandler = async (req, res) => {
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
   const db = getDb();
-  if (!db) return res.status(503).json({ error: 'DATABASE_URL is not configured on the server.' });
+  if (!db)  return res.status(503).json({ error: DB_NOT_CONFIGURED });
   const auth = await requireSession(req, db);
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
   const rate = checkRateLimit('api', `${clientIp(req.headers)}:provider`);

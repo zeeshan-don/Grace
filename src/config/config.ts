@@ -81,8 +81,24 @@ export function groqApiKey(): string | undefined {
   return key ? key : undefined;
 }
 
-/** Default GRACE backend URL used by login/usage-reporting when unset. */
-export const DEFAULT_API_URL = 'http://localhost:8787';
+/** Production GRACE backend the CLI logs in to and reports usage to. */
+export const PRODUCTION_API_URL = 'https://zeesh-ai.vercel.app';
+
+/** Local dev backend — used only when explicitly selected (local development). */
+export const LOCAL_API_URL = 'http://localhost:8787';
+
+/**
+ * Default GRACE backend URL used by login/usage-reporting when unset.
+ * Production by default; localhost is only reached when ZEESH_API_URL is
+ * explicitly set to it (local development mode).
+ */
+export const DEFAULT_API_URL = PRODUCTION_API_URL;
+
+/** True when the resolved backend is the local dev server (explicit opt-in). */
+export function isLocalBackend(url: string): boolean {
+  const u = url.trim().toLowerCase();
+  return u === LOCAL_API_URL || u === 'http://127.0.0.1:8787' || /^https?:\/\/localhost:\d+/.test(u);
+}
 
 /** The GRACE backend the CLI authenticates against (env override). */
 export function zeeshApiUrl(): string {

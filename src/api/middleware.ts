@@ -7,6 +7,19 @@
 import { logApiEvent } from './log.ts';
 import { HttpError, type ApiHandler, type ApiRequest, type ApiResponse } from './types.ts';
 
+/**
+ * True when a Postgres error means the schema is missing or mismatched
+ * (an unapplied/partial migration), so the failure is actionable rather than
+ * a mystery 500:
+ *   - 42P01 undefined_table     (e.g. relation "daily_cost" does not exist)
+ *   - 42703 undefined_column    (a column referenced by a query is missing)
+ * Never triggers for connection/auth/query errors — those stay generic 500s.
+ */
+function isPostgresSchemaError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return code === '42P01' || code === '42703';
+}
+
 /** CORS origin for browser clients; default '*' (the CLI is not a browser and is unaffected). */
 export function corsOrigin(): string {
   return process.env.ZEESH_CORS_ORIGIN?.trim() || '*';
@@ -57,6 +70,17 @@ export function withHttp(handler: ApiHandler): ApiHandler {
         // Intentional 4xx/5xx with a designed message (e.g. body too large).
         status = err.status;
         res.status(err.status).json({ error: err.message });
+      } else if (isPostgresSchemaError(err)) {
+        // The server DB is missing a table/column — almost always an unapplied
+        // migration, not a code bug. Give ops a clear, secret-free pointer
+        // instead of a silent 500 (which the CLI would read as a mystery
+        // failure). The concrete SQLSTATE goes to the log only.
+        status = 503;
+        errorDetail = err instanceof Error ? err.message : String(err);
+        res.status(503).json({
+          error:
+            'The server database is missing required tables or columns — run the database migrations (db/migrations/*.sql) and redeploy. Details were logged server-side.',
+        });
       } else {
         // Unexpected failure: never leak internals to the client.
         status = 500;

@@ -51,7 +51,19 @@ export async function runRepl(opts: ReplOptions = {}): Promise<number> {
   loadEnv(root);
   if (opts.verbose) setVerbose(true);
   const isTty = Boolean(processStdin.isTTY && processStdout.isTTY);
-  if (!isTty) return runPiped(root, opts);
+  if (!isTty) {
+    // The full-screen interface needs a real terminal. Say why the classic
+    // prompt is used so a launch through a wrapper (npm script, IDE task,
+    // shell alias piping stdio, …) is not mistaken for a missing feature.
+    const missing = !processStdin.isTTY && !processStdout.isTTY ? 'stdin and stdout' : !processStdin.isTTY ? 'stdin' : 'stdout';
+    console.error(
+      c.dim(
+        `Full-screen interface skipped: ${missing} ${missing === 'stdin and stdout' ? 'are' : 'is'} not attached to a terminal here. ` +
+          'Run `grace --new-window` for the full-screen TUI, or launch grace directly in a terminal (Windows Terminal / PowerShell 7+ / VS Code).',
+      ),
+    );
+    return runPiped(root, opts);
+  }
   // The full-screen TUI is loaded lazily so piped/CI mode never depends on it.
   try {
     const { runTui } = await import('./tui/index.ts');
