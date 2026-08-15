@@ -42,6 +42,40 @@ export function buildSystemPrompt(info: ProjectInfo): string {
 }
 
 /**
+ * Explicit file-ish targets named in a task (package.json, src/auth.ts,
+ * tests/calc.test.py, …). General — nothing is special-cased per file.
+ */
+const FILE_TARGET_RE =
+  /\b(?:[A-Za-z0-9_./-]*[A-Za-z0-9_])\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|json|toml|ya?ml|md|txt|sh|css|html|sql|c|cpp|h)\b/gi;
+
+/**
+ * Task-scope guidance for targeted requests (GRACE context efficiency).
+ *
+ * "Inspect package.json and find bugs" should read package.json and answer —
+ * not browse api/health.ts, src/api/handlers.ts or unrelated tests. When the
+ * user's task explicitly names one to three files, the agent gets a crisp
+ * scope rule: read those files plus their immediate dependencies, and only
+ * broaden exploration when the named files actually require it. Tasks that
+ * name no file (or name many) keep the default broad-exploration behavior.
+ * Returns '' (no hint) when the task is not a targeted-file task.
+ */
+export function taskScopeHint(task: string): string {
+  const targets = [
+    ...new Set(
+      (task.match(FILE_TARGET_RE) ?? []).map((m) => m.replace(/[.,;:!?]+$/, '')),
+    ),
+  ];
+  if (targets.length === 0 || targets.length > 3) return '';
+  return [
+    'Task scope (targeted):',
+    `- The task explicitly names: ${targets.join(', ')}.`,
+    '- Read ONLY those files plus the immediate dependencies they reference (imports, config, helpers they call).',
+    '- Do NOT browse the repository for related code, entry points, directories or tests unless one of the named files actually requires it.',
+    '- Answer the task from those files; if they are insufficient, state that and ask before exploring further.',
+  ].join('\n');
+}
+
+/**
  * Trim messages to fit the token budget (Milestone "context management").
  * Keeps the system prompt, drops the oldest tool results and middle messages
  * first, and truncates oversized tool contents.

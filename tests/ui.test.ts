@@ -135,18 +135,20 @@ function runThrough(events: CoordinatorEvent[], opts: { live?: boolean; verbose?
   return writes.join('');
 }
 
-test('progress: non-live output is deterministic — working line, bullets, done', () => {
+test('progress: non-live output is deterministic — working line, done (tool bullets are debug-only)', () => {
   const out = runThrough(scriptedRun(), { providerLabel: 'NVIDIA NIM', model: 'openai/gpt-oss-20b' });
   const lines = out.split('\n').filter(Boolean);
-  assert.deepEqual(lines, [
-    '  · Grace is working…',
-    '  • → read_file src/auth/login.ts',
-    '  • → edit_file src/auth/login.ts',
-    '  • → run_command npm test',
-    '  → Grace ✓ — Authentication added',
-  ]);
+  // Normal mode hides ALL internal tool activity — only the working line and
+  // the finished summary remain.
+  assert.deepEqual(lines, ['  · Grace is working…', '  → Grace ✓ — Authentication added']);
+  assert.ok(!out.includes('read_file'), 'tool activity is hidden in normal mode');
   assert.ok(!out.includes('Project Scout'), 'no committee of agents is printed');
   assert.ok(!out.includes('NVIDIA NIM'), 'provider/model are debug-only (see /status)');
+  // Verbose mode shows the tool-status bullets.
+  const verboseOut = runThrough(scriptedRun(), { verbose: true, providerLabel: 'NVIDIA NIM', model: 'openai/gpt-oss-20b' });
+  assert.match(verboseOut, /• → read_file src\/auth\/login\.ts/);
+  assert.match(verboseOut, /• → edit_file src\/auth\/login\.ts/);
+  assert.match(verboseOut, /• → run_command npm test/);
 });
 
 test('progress: verbose mode adds the provider header', () => {
@@ -194,14 +196,16 @@ test('progress: specialist agent names are debug-only (normal mode hides them)',
     { type: 'agent-done', role: 'editor', label: 'Grace', status: 'completed', summary: 'Implemented' },
     { type: 'done' },
   ];
-  // Normal mode: no internal agent ceremony, only the finished summary.
+  // Normal mode: no internal agent ceremony (planning included), only the
+  // finished summaries.
   const out = runThrough(events);
-  assert.match(out, /· Planning…/);
+  assert.ok(!out.includes('Planning'), 'planning is debug-only in normal mode');
   assert.ok(!out.includes('Thinker'), 'specialist names are debug-only');
   assert.match(out, /→ ✓ — Strategy ready/);
   assert.match(out, /→ Grace ✓ — Implemented/);
-  // Debug mode: specialist start lines + names appear.
+  // Debug mode: planning + specialist start lines + names appear.
   const verboseOut = runThrough(events, { verbose: true });
+  assert.match(verboseOut, /· Planning…/);
   assert.match(verboseOut, /· Thinker…/);
   assert.match(verboseOut, /→ Thinker ✓ — Strategy ready/);
 });
@@ -232,8 +236,11 @@ test('progress: ASCII fallback keeps the same structure with safe glyphs', () =>
   withEnv({ ZEESH_ASCII: '1', ZEESH_UNICODE: undefined }, () => {
     const out = runThrough(scriptedRun());
     assert.match(out, /-> Grace \[ok\] — Authentication added/);
-    // Settled bullets become '*' (the tool-status text itself keeps its unicode arrow).
-    assert.match(out, /\* → read_file src\/auth\/login\.ts/);
+    // Tool-status bullets are hidden in normal mode; verbose keeps them with
+    // the ASCII '*' bullet.
+    assert.ok(!out.includes('read_file'), 'tool activity is hidden in normal mode');
+    const verboseOut = runThrough(scriptedRun(), { verbose: true });
+    assert.match(verboseOut, /\* → read_file src\/auth\/login\.ts/);
   });
 });
 

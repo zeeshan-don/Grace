@@ -7,6 +7,7 @@
  * proving the Ink components actually render.
  */
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { after, test } from 'node:test';
 import { renderToString } from 'ink';
 import { createElement as h } from 'react';
@@ -18,6 +19,7 @@ import { SLASH_COMMANDS } from '../src/cli/tui/commands.ts';
 import { discoverModels, discoverProviders } from '../src/cli/tui/models.ts';
 import { HomeScreen, TaskHeader, ActivityPanel, InputLine } from '../src/cli/tui/components.ts';
 import { RemoteProvider, resetSharedRemoteState } from '../src/providers/remote.ts';
+import { authSessionPath, clearSession } from '../src/auth/session.ts';
 import type { TuiInfo } from '../src/cli/tui/types.ts';
 
 const SAVED_ENV: Record<string, string | undefined> = {};
@@ -274,7 +276,23 @@ test('models: no provider yields an empty picker (no fake models)', async () => 
 
 test('models: providers list is empty when nothing is configured', () => {
   process.env.GROQ_API_KEY = '';
-  assert.deepEqual(discoverProviders(fakeRuntime(null)), []);
+  // discoverProviders reads the REAL ~/.zeesh/auth.json — a logged-in dev
+  // machine would otherwise list the GRACE backend. Back it up, clear,
+  // assert, restore so the test is hermetic on any machine.
+  const path = authSessionPath();
+  let backup: string | null = null;
+  try {
+    backup = readFileSync(path, 'utf8');
+  } catch {
+    backup = null;
+  }
+  clearSession(path);
+  try {
+    assert.deepEqual(discoverProviders(fakeRuntime(null)), []);
+  } finally {
+    if (backup === null) clearSession(path);
+    else writeFileSync(path, backup, 'utf8');
+  }
 });
 
 // ---------------------------------------------------------------------------

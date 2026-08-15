@@ -50,11 +50,14 @@ export function buildTuiInfo(runtime: Runtime, freePlanLine?: string): TuiInfo {
 /**
  * Best-effort free-plan + session-time fetch from the backend (real data).
  * Never delays or breaks the UI: failures just leave the line unset.
+ *
+ * The free plan belongs to the logged-in ACCOUNT, not to how requests are
+ * transported — so this runs whenever a valid session exists, even when a
+ * local GROQ_API_KEY is serving requests instead of the backend.
  */
-export async function refreshFreePlan(runtime: Runtime): Promise<string | undefined> {
+export async function refreshFreePlan(): Promise<string | undefined> {
   const stored = loadSession();
   if (!stored || sessionExpired(stored)) return undefined;
-  if (!(runtime.provider instanceof RemoteProvider)) return undefined;
   try {
     const state = await new ApiClient(stored.apiUrl, 2000).getUsage(stored.token);
     // Seed the shared session view so the live countdown renders even before

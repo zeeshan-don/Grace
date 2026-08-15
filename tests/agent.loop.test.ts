@@ -171,13 +171,13 @@ test('agent loop recovers from a bad tool name with an error result', async () =
   assert.ok(session.toolHistory.some((h) => h.includes('no_such_tool')));
 });
 
-test('agent loop retries a rate-limited turn (bounded backoff) and succeeds', async () => {
+test('agent loop surfaces a rate-limited turn immediately — the Model Router handles fallback, not the client', async () => {
   const root = tempProject();
   const { project, session, undo, tools } = setup(root);
-  const script: ScriptedTurn[] = [
-    { error: '429 rate limit hit' },
-    { content: 'recovered after the rate limit' },
-  ];
+  // The provider chain (server-side FallbackProvider) already tried every
+  // provider inside this ONE request; a client-side backoff retry would only
+  // re-hit the same exhausted providers. The failure must surface once.
+  const script: ScriptedTurn[] = [{ error: '429 rate limit hit' }];
   const provider = new FakeProvider(script);
   const loop = new AgentLoop({
     provider,
@@ -189,14 +189,15 @@ test('agent loop retries a rate-limited turn (bounded backoff) and succeeds', as
     askPermission: async () => false,
   });
   const result = await loop.run('hi');
-  assert.equal(provider.callCount, 2, 'one retry after the rate limit');
-  assert.equal(result.finalText, 'recovered after the rate limit');
+  assert.equal(provider.callCount, 1, 'no client-side retry after a rate limit');
+  assert.ok(result.finalText.startsWith('I could not reach the AI provider'), 'the failure is reported');
+  assert.match(result.finalText, /rate limit/i, 'the user sees a clean rate-limit hint');
 });
 
-test('agent loop gives up on a persistent rate limit with a bounded number of attempts', async () => {
+test('agent loop never re-sends a too-large (TPM/413) request and never leaks raw provider codes', async () => {
   const root = tempProject();
   const { project, session, undo, tools } = setup(root);
-  const script: ScriptedTurn[] = Array.from({ length: 5 }, () => ({ error: '413 TPM limit exceeded' }));
+  const script: ScriptedTurn[] = [{ error: 'Error 413: TPM limit exceeded, requested 11468 limit 8000' }];
   const provider = new FakeProvider(script);
   const loop = new AgentLoop({
     provider,
@@ -208,9 +209,11 @@ test('agent loop gives up on a persistent rate limit with a bounded number of at
     askPermission: async () => false,
   });
   const result = await loop.run('hi');
-  assert.equal(provider.callCount, 3, 'exactly three bounded attempts, no blind retry loop');
-  assert.ok(result.finalText.startsWith('I could not reach the AI provider'), 'the failure is reported');
-  assert.match(result.finalText, /rate limit/i, 'the user sees a clear rate-limit hint');
+  assert.equal(provider.callCount, 1, 'a too-large request is never re-sent');
+  assert.ok(result.finalText.startsWith('I could not reach the AI provider'));
+  assert.match(result.finalText, /rate limit/i, 'the user sees a clean rate-limit hint');
+  assert.ok(!result.finalText.includes('413'), 'raw provider codes never leak to the user');
+  assert.ok(!result.finalText.includes('11468'), 'raw provider numbers never leak to the user');
 });
 
 test('agent loop stops at the iteration limit', async () => {

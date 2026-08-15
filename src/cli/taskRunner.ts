@@ -4,6 +4,7 @@ import { RoleModelRouter } from '../agents/roleRouter.ts';
 import type { CoordinatorRunResult } from '../agents/types.ts';
 import { TaskCancelledError } from '../agent/loop.ts';
 import { reportRunUsage } from '../auth/reporting.ts';
+import { loadSession, sessionExpired } from '../auth/session.ts';
 import { ProjectIndexService } from '../project/index.ts';
 import { RemoteProvider } from '../providers/remote.ts';
 import type { Runtime } from '../runtime.ts';
@@ -105,10 +106,11 @@ export async function runTask(runtime: Runtime, input: string, opts: TaskRunOpti
 
   console.log(renderTaskResult({ result, runtime, executionTimeMs, verbose }));
 
-  // GRACE FREE: daily session quota from the server's last response. Role
-  // routing creates one RemoteProvider per agent tier, so the freshest state
-  // is the shared view across all instances of this run.
-  if (runtime.provider instanceof RemoteProvider) {
+  // GRACE FREE: daily session quota from the server's latest response. The
+  // free plan belongs to the logged-in account (not the transport), so the
+  // line shows whenever a valid session exists — local key or backend.
+  const stored = loadSession();
+  if (stored && !sessionExpired(stored)) {
     const last = RemoteProvider.sharedSession();
     if (last) {
       const line = sessionStatusLine(last);

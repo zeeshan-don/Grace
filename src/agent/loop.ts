@@ -7,9 +7,16 @@ import { isProtectedPath, resolveInProject } from '../safety/policy.ts';
 import type { Tool } from '../tools/registry.ts';
 import { truncateMiddle } from '../util/text.ts';
 import type { ToolEvent } from '../agents/types.ts';
-import { buildSystemPrompt, projectBits, DEFAULT_CONTEXT_BUDGET, trimMessages } from './context.ts';
-import { providerError, formatRunError, type TaskRunError } from './errors.ts';
+import { buildSystemPrompt, projectBits, taskScopeHint, DEFAULT_CONTEXT_BUDGET, trimMessages } from './context.ts';
+import {
+  providerError,
+  formatRunError,
+  classifyProviderError,
+  type TaskRunError,
+  type TaskRunErrorCategory,
+} from './errors.ts';
 import { scrub } from '../providers/errors.ts';
+import { debugLog } from '../cli/verbose.ts';
 import { parseToolCallArguments, sanitizeArgumentsForWire, sanitizeRawForLog, type ToolCallParseError } from './toolCall.ts';
 import { ToolCache } from './toolCache.ts';
 
@@ -121,9 +128,13 @@ export class AgentLoop {
     session.beginRun();
     session.pushMessage({ role: 'user', content: input });
     const defaultSystem = buildSystemPrompt(this.ctx.project);
-    const system = this.ctx.systemPrompt
+    const base = this.ctx.systemPrompt
       ? `${this.ctx.systemPrompt}\n\nProject: ${projectBits(this.ctx.project)}\nGit:\n${gitAwareness(this.ctx.projectRoot)}`
       : `${defaultSystem}\n\nGit:\n${gitAwareness(this.ctx.projectRoot)}`;
+    // Targeted tasks ("inspect package.json") get an explicit scope rule so
+    // the agent does not explore unrelated files (context efficiency).
+    const scope = taskScopeHint(input);
+    const system = scope ? `${base}\n\n${scope}` : base;
     const messages: ChatMessage[] = [{ role: 'system', content: system }, ...session.messages];
     const toolDefs = this.toolDefs();
 
@@ -262,11 +273,14 @@ export class AgentLoop {
   /**
    * Stream one model turn, collecting content and tool-call deltas.
    *
-   * Rate-limit / too-large rejections are retried with a short exponential
-   * backoff (bounded). This happens strictly at the model-request boundary:
-   * the turn's tools have NOT executed yet, so a retry can never duplicate
-   * tool work. Any other failure surfaces immediately, classified into the
-   * run-error taxonomy (never just "the provider is down").
+   * Provider-level failures (rate limit, TPM/request-too-large, timeout,
+   * outage, …) surface IMMEDIATELY — never retried on the client. The Model
+   * Router (server-side FallbackProvider chain) already moved Groq → NVIDIA →
+   * Gemini → MiniMax inside this one request, so a client-side backoff retry
+   * would only re-hit the same exhausted providers. Only MODEL-OUTPUT
+   * problems (malformed tool-call arguments) get a bounded retry here, and
+   * that happens strictly at the model-request boundary: the turn's tools
+   * have not executed yet, so a retry can never duplicate tool work.
    */
   private async runTurn(
     messages: ChatMessage[],
@@ -274,8 +288,6 @@ export class AgentLoop {
   ): Promise<{ content: string; toolCalls: ToolCallParam[]; streamUsage?: Usage; error?: TaskRunError }> {
     const { provider, onStream } = this.ctx;
     const MAX_TURN_ATTEMPTS = 3;
-    const BACKOFF_MS = [0, 1_500, 3_000];
-    let lastError = '';
 
     for (let attempt = 0; attempt < MAX_TURN_ATTEMPTS; attempt += 1) {
       if (attempt > 0) this.metrics.retries += 1;
@@ -325,9 +337,8 @@ export class AgentLoop {
         this.metrics.modelTimeMs += performance.now() - turnStart;
         // A user cancellation is not a provider failure — surface it as such.
         if (this.ctx.signal?.aborted) throw new TaskCancelledError();
-        lastError = (err as Error).message ?? String(err);
-        const rateLimited = /rate.?limit|TPM|too large|429|413/i.test(lastError);
-        const parseError = /failed to parse tool call arguments/i.test(lastError);
+        const raw = (err as Error).message ?? String(err);
+        const parseError = /failed to parse tool call arguments/i.test(raw);
         const isLastAttempt = attempt >= MAX_TURN_ATTEMPTS - 1;
 
         if (parseError) {
@@ -341,11 +352,11 @@ export class AgentLoop {
           if (structured) return structured;
           // The structured path failed too — one more streaming attempt, then
           // give up with a classified InvalidToolCall.
-          console.error(`[grace:tool-call] provider rejected malformed tool-call arguments: ${scrub(lastError)}`);
+          debugLog(`[grace:tool-call] provider rejected malformed tool-call arguments: ${scrub(raw)}`);
           if (isLastAttempt) {
             const error: TaskRunError = {
               category: 'invalid_tool_call',
-              message: `The model emitted tool calls with malformed JSON arguments and the provider could not parse them. ${scrub(lastError)}`,
+              message: `The model emitted tool calls with malformed JSON arguments and the provider could not parse them. ${scrub(raw)}`,
               providerId: provider.id,
               providerLabel: provider.label,
               modelId: provider.getModel().id,
@@ -355,23 +366,23 @@ export class AgentLoop {
           continue; // same context, one more chance for a valid tool call
         }
 
-        if (!rateLimited || isLastAttempt) {
-          const hint = rateLimited
-            ? '\n\nThe provider rate limit was hit or the request was too large. The router tries a fallback provider automatically; you can also wait a moment and retry, or use /model to pick a smaller/faster model.'
-            : '';
-          const error = providerError(lastError + hint, {
-            id: provider.id,
-            label: provider.label,
-            modelId: provider.getModel().id,
-          });
-          console.error(`[grace:provider] ${provider.id} failed (${error.category}): ${error.message}`);
-          return { content, toolCalls: [], error };
-        }
-        const delay = (BACKOFF_MS[attempt] as number) ?? 1_000;
-        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+        // Provider-level failure — surface immediately with a clean, user-safe
+        // message. The raw provider text ("413", "rate_limit_exceeded", JSON)
+        // never reaches the user: it goes to the debug log only.
+        const category = classifyProviderError(raw);
+        const rateLimited = /rate.?limit|TPM|too large|429|413/i.test(raw);
+        debugLog(`[grace:provider] ${provider.id} failed (${category}): ${scrub(raw)}`);
+        const error: TaskRunError = {
+          category,
+          message: cleanProviderMessage(category, rateLimited),
+          providerId: provider.id,
+          providerLabel: provider.label,
+          modelId: provider.getModel().id,
+        };
+        return { content, toolCalls: [], error };
       }
     }
-    const error = providerError(lastError, { id: provider.id, label: provider.label, modelId: provider.getModel().id });
+    const error = providerError('The AI provider request failed.', { id: provider.id, label: provider.label, modelId: provider.getModel().id });
     return { content: '', toolCalls: [], error };
   }
 
@@ -427,7 +438,7 @@ export class AgentLoop {
       this.lastInvalidCall = { name: call.name, raw: e.rawArguments };
       this.metrics.failedToolCalls += 1;
       const diag = `Tool call "${call.name}" had invalid JSON arguments. Raw (redacted): ${e.rawArguments}`;
-      console.error(`[grace:tool-call] ${call.name} — invalid JSON arguments, refusing to execute: ${e.rawArguments}`);
+      debugLog(`[grace:tool-call] ${call.name} — invalid JSON arguments, refusing to execute: ${e.rawArguments}`);
       const reply =
         `Error: ${diag}\n` +
         `The arguments could not be parsed as a single JSON object. Re-issue this tool call with valid JSON arguments (no code fences, no extra text).`;
@@ -562,4 +573,23 @@ export class AgentLoop {
 /** Copy tool calls so malformed arguments never reach the provider's wire. */
 function sanitizeCallsForWire(calls: ToolCallParam[]): ToolCallParam[] {
   return calls.map((c) => ({ ...c, arguments: sanitizeArgumentsForWire(c.arguments) }));
+}
+
+/**
+ * Clean, user-safe text for a surfaced provider failure. The raw provider
+ * message (status codes, "rate_limit_exceeded", JSON bodies) is debug-only;
+ * normal users see exactly these sentences.
+ */
+function cleanProviderMessage(category: TaskRunErrorCategory, rateLimited: boolean): string {
+  if (rateLimited) {
+    return 'The AI provider hit a rate limit or the request was too large for it. Wait a moment and try again.';
+  }
+  switch (category) {
+    case 'provider_timeout':
+      return 'The AI provider timed out. Wait a moment and try again.';
+    case 'provider_authentication':
+      return 'The AI provider rejected the request — the server-side API key may be invalid.';
+    default:
+      return 'The AI provider could not be reached. Check your connection and try again.';
+  }
 }

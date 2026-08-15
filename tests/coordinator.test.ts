@@ -297,7 +297,10 @@ test('coordinator: failed-agent recovery — a failing specialist does not abort
   const out = await coordinator.run('refactor the login flow');
 
   assert.equal(out.results[0]!.status, 'failed');
-  assert.match(out.results[0]!.error ?? '', /server boom/);
+  // Provider failures surface with a CLEAN user-safe message — never the raw
+  // provider text ('server boom' stays in the debug log only).
+  assert.match(out.results[0]!.error ?? '', /could not be reached/);
+  assert.ok(!(out.results[0]!.error ?? '').includes('server boom'), 'raw provider errors never leak to the user');
   assert.equal(out.results[1]!.status, 'completed');
   assert.ok(out.finalAnswer.includes('Implemented the fix.'), 'final answer comes from the surviving agent');
 });

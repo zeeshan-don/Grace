@@ -7,7 +7,6 @@ import { stdin as processStdin, stdout as processStdout, cwd } from 'node:proces
 import { ApiClient, type DailySessionState } from '../auth/client.ts';
 import { loadSession } from '../auth/session.ts';
 import { loadEnv } from '../config/config.ts';
-import { RemoteProvider } from '../providers/remote.ts';
 import { createRuntime, type Runtime } from '../runtime.ts';
 import { shortPath } from '../util/text.ts';
 import { cmdLogin, cmdLogout, cmdRegister, cmdWhoami } from './authCommands.ts';
@@ -337,7 +336,7 @@ async function printBanner(runtime: Runtime): Promise<void> {
     ? runtime.provider.label
     : c.yellow('not configured — add GROQ_API_KEY to .env or run /login');
   const modelStatus = runtime.provider ? runtime.provider.getModel().id : th.dim('—');
-  const freePlan = await loadBannerFreePlan(runtime);
+  const freePlan = await loadBannerFreePlan();
   const sessionStatus = session
     ? (() => {
         // When a free session is active, the Session row shows the time left
@@ -364,9 +363,10 @@ async function printBanner(runtime: Runtime): Promise<void> {
 /**
  * GRACE FREE banner row: fetch the server's daily session state once, briefly.
  * Best-effort only — a slow/unreachable backend never delays or breaks the CLI.
+ * Runs for any logged-in account (the free plan is the account's, regardless
+ * of whether a local key or the backend transports requests).
  */
-async function loadBannerFreePlan(runtime: Runtime): Promise<DailySessionState | undefined> {
-  if (!(runtime.provider instanceof RemoteProvider)) return undefined; // local key / offline
+async function loadBannerFreePlan(): Promise<DailySessionState | undefined> {
   const session = loadSession();
   if (!session) return undefined;
   try {

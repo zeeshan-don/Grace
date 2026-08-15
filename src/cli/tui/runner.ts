@@ -17,7 +17,7 @@ import type { CoordinatorEvent } from '../../agents/types.ts';
 import { TaskCancelledError } from '../../agent/loop.ts';
 import { reportRunUsage } from '../../auth/reporting.ts';
 import { ApiClient, ApiError } from '../../auth/client.ts';
-import { loadSession, saveSession } from '../../auth/session.ts';
+import { loadSession, saveSession, sessionExpired } from '../../auth/session.ts';
 import { zeeshApiUrl } from '../../config/config.ts';
 import { ProjectIndexService } from '../../project/index.ts';
 import { RemoteProvider } from '../../providers/remote.ts';
@@ -132,6 +132,10 @@ export class TuiRunner {
 
     store.push('user', input);
     store.mode = 'session';
+    // A new task always follows the newest output: if the user scrolled up
+    // inspecting the previous run, drop back to the bottom so this run's
+    // output (and the input line) are immediately visible.
+    store.scrollToBottom();
 
     const route = classifyTask(input).route;
     if (route === 'conversation') {
@@ -190,7 +194,10 @@ export class TuiRunner {
       store.push('result', stripAnsi(renderTaskResult({ result, runtime, executionTimeMs, verbose })));
 
       // GRACE FREE: quota from the server's latest response (real state).
-      if (runtime.provider instanceof RemoteProvider) {
+      // Shown for ANY logged-in account — the free plan belongs to the
+      // account, not to how requests are transported (local key or backend).
+      const stored = loadSession();
+      if (stored && !sessionExpired(stored)) {
         const last = RemoteProvider.sharedSession();
         if (last) {
           const line = sessionStatusLine(last);
@@ -217,23 +224,32 @@ export class TuiRunner {
     }
   }
 
-  /** Map a coordinator event into activity feed lines (never chain-of-thought). */
+  /**
+   * Map a coordinator event into activity feed lines (never chain-of-thought).
+   *
+   * Normal mode shows only the spinner ("Grace is working…") plus genuine
+   * user-relevant events (permission decisions, completion, quota). Internal
+   * activity — planning, tool calls, progress status lines — is debug/verbose
+   * only, exactly like the classic ProgressRenderer.
+   */
   private handleCoordinatorEvent(e: CoordinatorEvent): void {
     const store = this.store;
+    const verbose = isVerbose();
     switch (e.type) {
       case 'planning':
-        store.push('info', 'Planning…');
+        if (verbose) store.push('info', 'Planning…');
         break;
       case 'status':
+        if (!verbose) break;
         if (isToolStatus(e.message) || isNoise(e.message)) break;
         store.push('progress', e.message);
         break;
       case 'tool-start':
-        store.push('tool', friendlyTool(e.tool, e.args));
+        if (verbose) store.push('tool', friendlyTool(e.tool, e.args));
         store.recordToolCall();
         break;
       case 'tool-end':
-        if (!e.ok) store.push('error', `${e.tool} failed`);
+        if (verbose && !e.ok) store.push('error', `${e.tool} failed`);
         break;
       case 'file-changed':
         store.recordChangedFile(e.path);
@@ -364,7 +380,9 @@ export class TuiRunner {
       return;
     }
 
-    const apiUrl = loadSession()?.apiUrl ?? zeeshApiUrl();
+    // Configuration only (ZEESH_API_URL override, else the deployed backend)
+    // — a stale stored session never redirects login to an old dev backend.
+    const apiUrl = zeeshApiUrl();
     const api = new ApiClient(apiUrl);
     try {
       const result = login.purpose === 'login' ? await api.login(email, password) : await api.register(email, password);

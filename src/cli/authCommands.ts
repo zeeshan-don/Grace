@@ -15,8 +15,11 @@ import { promptHidden, promptText } from './input.ts';
 
 /** `grace login [email]` */
 export async function cmdLogin(arg: string): Promise<number> {
-  const existing = loadSession();
-  const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
+  // The backend comes from configuration ONLY (ZEESH_API_URL override, else
+  // the deployed production backend). A stale stored session must never pull
+  // login back to an old dev backend (e.g. http://localhost:8787) — localhost
+  // is only ever reached when explicitly configured via ZEESH_API_URL.
+  const apiUrl = zeeshApiUrl();
   console.log(
     c.dim(
       isLocalBackend(apiUrl)
@@ -53,8 +56,8 @@ export async function cmdLogin(arg: string): Promise<number> {
 
 /** `grace register [email]` — create an account (password ≥ 8 chars). */
 export async function cmdRegister(arg: string): Promise<number> {
-  const existing = loadSession();
-  const apiUrl = existing?.apiUrl ?? zeeshApiUrl();
+  // Same rule as login: configuration only — never a stale stored session.
+  const apiUrl = zeeshApiUrl();
   console.log(
     c.dim(
       isLocalBackend(apiUrl)

@@ -299,8 +299,10 @@ test('interactive: a failing task returns to the prompt', async () => {
     stdin: 'Break everything\n/exit\n',
   });
   assert.equal(code, 0, 'session survives the error and exits cleanly');
-  // The error message from the provider should be surfaced.
-  assert.match(stdout, /server boom/);
+  // The failure is surfaced with a CLEAN user-safe message (the mock backend
+  // throws 'server boom' — that raw text must never reach the user).
+  assert.match(stdout, /could not be reached/);
+  assert.ok(!stdout.includes('server boom'), 'raw provider errors never leak to the user');
   // The session continued and the exit command was processed.
   assert.match(stdout, /Goodbye/);
 });

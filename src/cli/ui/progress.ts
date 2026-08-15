@@ -97,6 +97,8 @@ export class ProgressRenderer {
         }
         break;
       case 'planning':
+        // Planning is internal ceremony — debug mode only.
+        if (!this.verbose) break;
         this.planning = `  ${this.th.dim(`${this.sym.bullet} Planning${this.sym.ellipsis}`)}`;
         if (!this.live) this.print(`${this.planning}\n`);
         else this.paint();
@@ -105,7 +107,9 @@ export class ProgressRenderer {
         this.setCurrent(`  ${this.th.dim(`${this.sym.bullet} Grace is working${this.sym.ellipsis}`)}`);
         break;
       case 'status':
-        if (isNoise(evt.message)) break;
+        // Status lines are internal activity (tool calls, flagged-command
+        // notes, iteration counts) — normal mode shows only the working line.
+        if (!this.verbose || isNoise(evt.message)) break;
         this.addSettled(`  ${this.sym.dot} ${evt.message}`);
         break;
       case 'step-start':

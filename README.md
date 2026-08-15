@@ -156,7 +156,7 @@ backend only — never exposed to clients:
 | `DATABASE_URL` | API | Neon PostgreSQL connection string (accounts, sessions, usage tables) |
 | `GROQ_API_KEY` | CLI + API | Local agent key; also the server-side **primary** provider for `/api/provider` |
 | `NVIDIA_API_KEY` | API only | Server-side provider (NVIDIA NIM) for `/api/provider` — never sent to the CLI |
-| `ZEESH_API_URL` | CLI | Backend the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
+| `ZEESH_API_URL` | CLI | Backend the CLI logs in to (default the deployed backend `https://zeesh-ai.vercel.app`; set to `http://localhost:8787` ONLY for local development) |
 | `ZEESH_BETA_MODE` | API | `closed` gates registration behind the allowlist (default `open`) |
 | `ZEESH_BETA_ALLOWLIST` | API | Comma-separated emails allowed to register when closed |
 | `ZEESH_CORS_ORIGIN` | API | Browser origin allowed to call the API (default `*`) |
@@ -559,8 +559,25 @@ npm run dev          # run the CLI from source (no build)
 npm run serve        # run the API locally (Milestones 10–11 backend)
 npm test             # unit + integration + API tests
 npm run typecheck    # tsc --noEmit (src + tests + api)
-npm run build        # emit dist/
+npm run build        # emit dist/ + write dist/build.json
 ```
+
+### Applying source changes to the `grace` command
+
+`dist/` is **git-ignored** — pushing to GitHub never updates the CLI you run
+locally. After editing `src/`, run `npm run build`; the `grace` command reads
+`dist/` fresh on every invocation (the global `npm link` is a symlink to this
+repo), so no re-link or terminal restart is needed. Prove which build you are
+running with:
+
+```bash
+grace --version   # prints "(build <timestamp> · <commit>)" from dist/build.json
+```
+
+The timestamp should match the last `npm run build` output. If it does not,
+re-run `npm run build` (and re-run `npm link` only if `grace` itself is
+missing from the PATH). Backend/CLI changes you want deployed to Vercel are
+separate: commit + push, and the Vercel deployment picks them up.
 
 ## Roadmap
 

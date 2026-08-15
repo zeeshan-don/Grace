@@ -112,6 +112,11 @@ export function TaskHeader({ store }: { store: TuiStore }): ReactNode {
   const columns = size.columns ?? 80;
   const lastUser = lastUserItem(store);
   const model = info.providerAvailable ? (info.model || info.provider || '') : (info.providerError ?? '');
+  const sessionState = RemoteProvider.sharedSession();
+  const sessionNum =
+    sessionState && typeof sessionState.currentSession === 'number'
+      ? `Session ${sessionState.currentSession}/${sessionState.sessionsUsed + sessionState.sessionsRemaining} · `
+      : null;
 
   return h(
     Box,
@@ -121,7 +126,14 @@ export function TaskHeader({ store }: { store: TuiStore }): ReactNode {
       { flexDirection: 'row' },
       h(Text, { bold: true, color: 'cyan', dimColor: true }, wordmark()),
       h(Box, { flexGrow: 1 }),
-      columns >= 76 ? h(SessionTimer, {}) : null,
+      columns >= 60
+        ? h(
+            Box,
+            { flexDirection: 'row' },
+            sessionNum ? h(Text, { color: 'yellow', dimColor: true }, sessionNum) : null,
+            h(SessionTimer, {}),
+          )
+        : null,
       model ? h(Text, { color: 'gray', dimColor: true }, fit(model, 44)) : null,
     ),
     lastUser
@@ -285,10 +297,14 @@ export function StatusRow({ store }: { store: TuiStore }): ReactNode {
   const model = info.providerAvailable ? (info.model || info.provider || '—') : (info.providerError ?? 'no provider');
   const status = busy ? 'working' : 'ready';
   const statusColor = busy ? 'cyan' : 'green';
+  const sessionState = RemoteProvider.sharedSession();
+  const hasLiveSession =
+    sessionState && sessionSecondsLeft(sessionState.sessionExpiresAt) !== null;
 
   if (columns < 70) {
     // Single quiet line. Shrink the model first; drop it when there is no
-    // room, so the row never wraps on a narrow terminal.
+    // room, so the row never wraps on a narrow terminal. When a free session
+    // is active the LIVE countdown rides along (ticks every second).
     const sep = ' · ';
     const statusText = `${sym.dot} ${status}`;
     const budget = Math.max(12, columns - 4);
@@ -308,6 +324,19 @@ export function StatusRow({ store }: { store: TuiStore }): ReactNode {
         [info.workspace, shownModel, info.session].filter(Boolean).join(sep) + `${sep}`,
       ),
       h(Text, { color: statusColor }, statusText),
+      hasLiveSession
+        ? h(
+            Box,
+            { flexDirection: 'row' },
+            h(Text, { color: 'yellow', dimColor: true }, ' · '),
+            h(
+              Text,
+              { color: 'yellow', dimColor: true },
+              `Session ${sessionState?.currentSession ?? sessionState?.sessionsUsed}/${sessionState?.sessionsUsed + (sessionState?.sessionsRemaining ?? 0)} · `,
+            ),
+            h(SessionTimer, {}),
+          )
+        : null,
     );
   }
 
@@ -323,9 +352,8 @@ export function StatusRow({ store }: { store: TuiStore }): ReactNode {
   // active the countdown is LIVE (ticks every second); the static line covers
   // the "N sessions remaining" / "all used" cases instead. Quiet, and only on
   // wide screens — narrow/short terminals collapse it (see /status).
-  const sessionState = RemoteProvider.sharedSession();
   const quota =
-    sessionState && sessionSecondsLeft(sessionState.sessionExpiresAt) !== null
+    hasLiveSession
       ? h(
           Box,
           { flexDirection: 'row', marginTop: 1 },

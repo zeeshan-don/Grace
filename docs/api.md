@@ -274,7 +274,7 @@ local agent. A shared store (Redis/Upstash) is recommended before public beta
 | `MINIMAX_API_KEY` | API only | Server-side fallback provider (MiniMax-M3, last in the chain) — never sent to the CLI |
 | `DEEPSEEK_API_KEY` | API only | Optional DeepSeek provider leg — never sent to the CLI |
 | `DATABASE_URL` | API only | Neon PostgreSQL connection string (required for auth + usage) |
-| `ZEESH_API_URL` | CLI only | Backend URL the CLI logs in to (default `http://localhost:8787`; set to your deployed URL in production) |
+| `ZEESH_API_URL` | CLI only | Backend URL the CLI logs in to (default the deployed backend `https://zeesh-ai.vercel.app`; set to `http://localhost:8787` ONLY for local development) |
 | `ZEESH_BETA_MODE` | API only | `closed` gates registration behind the allowlist (default `open`) |
 | `ZEESH_BETA_ALLOWLIST` | API only | Comma-separated emails allowed to register when closed |
 | `ZEESH_CORS_ORIGIN` | API only | Browser origin allowed to call the API (default `*`) |

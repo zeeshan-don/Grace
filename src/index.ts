@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { cwd } from 'node:process';
 import { PRODUCT, TAGLINE, VERSION } from './meta.ts';
 import { cmdLogin, cmdLogout, cmdRegister, cmdWhoami } from './cli/authCommands.ts';
@@ -68,7 +69,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.version) {
-    console.log(`${PRODUCT} v${VERSION}`);
+    console.log(`${PRODUCT} v${VERSION}${buildStamp()}`);
     return;
   }
   if (args.help) {
@@ -107,6 +108,25 @@ async function runSubcommand(cmd: Subcommand, arg: string): Promise<number> {
       return cmdLogout();
     case 'whoami':
       return cmdWhoami();
+  }
+}
+
+/**
+ * " (build 2026-08-15 23:59 UTC · abc1234)" from dist/build.json (written by
+ * `npm run build`). Empty when running from source or when the stamp is
+ * missing — `--version` then just prints the version.
+ */
+function buildStamp(): string {
+  try {
+    const raw = readFileSync(new URL('./build.json', import.meta.url), 'utf8');
+    const stamp = JSON.parse(raw) as { builtAt?: string; commit?: string | null };
+    const time = stamp.builtAt
+      ? new Date(stamp.builtAt).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+      : '';
+    const suffix = [time, stamp.commit].filter(Boolean).join(' · ');
+    return suffix ? ` (build ${suffix})` : '';
+  } catch {
+    return '';
   }
 }
 

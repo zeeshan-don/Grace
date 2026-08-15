@@ -13,7 +13,7 @@ import { createElement as h } from 'react';
 import { loadEnv } from '../../config/config.ts';
 import { VERSION } from '../../meta.ts';
 import { createRuntime } from '../../runtime.ts';
-import { setVerbose } from '../verbose.ts';
+import { isVerbose, setVerbose } from '../verbose.ts';
 import { GraceApp } from './app.ts';
 import { TuiRunner } from './runner.ts';
 import { TuiStore } from './store.ts';
@@ -51,7 +51,7 @@ export async function runTui(root: string, opts: TuiOptions = {}): Promise<numbe
   // Real status snapshot: provider/model from the runtime, session from the
   // stored auth, free-plan quota from the backend (best-effort).
   store.info = buildTuiInfo(runtime);
-  void refreshFreePlan(runtime).then((line) => {
+  void refreshFreePlan().then((line) => {
     store.info = { ...store.info, freePlan: line };
     store.notify();
   });
@@ -87,7 +87,11 @@ export async function runTui(root: string, opts: TuiOptions = {}): Promise<numbe
   };
   const toActivity = (kind: 'console' | 'error'): ((...args: unknown[]) => void) =>
     (...args: unknown[]) => {
-      store.push(kind === 'error' ? 'error' : 'console', format(...args));
+      const text = format(...args);
+      // Defense in depth: internal `[grace:…]` diagnostics are debug-only
+      // (debugLog already gates them) — never surface them in normal mode.
+      if (!isVerbose() && text.trimStart().startsWith('[grace:')) return;
+      store.push(kind === 'error' ? 'error' : 'console', text);
     };
   console.log = toActivity('console');
   console.error = toActivity('error');
