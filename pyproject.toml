@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grace"
+version = "0.1.0"
+description = "GRACE — a terminal AI coding agent that works inside your local codebase — free AI coding assistance."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["cli", "ai", "coding-agent", "agent", "developer-tools", "terminal"]
+dependencies = [
+    "requests>=2.31",
+    "textual>=0.80",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+grace = "grace.cli.index:main"
+
+[tool.setuptools.packages.find]
+include = ["grace*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -81,8 +81,12 @@ export function groqApiKey(): string | undefined {
   return key ? key : undefined;
 }
 
-/** Production GRACE backend the CLI logs in to and reports usage to. */
-export const PRODUCTION_API_URL = 'https://zeesh-ai.vercel.app';
+/**
+ * Production GRACE backend the CLI logs in to and reports usage to.
+ * Canonical domain (grace.zeeshstudios.in); the legacy .vercel.app domain
+ * 307-redirects to it, which drops the Authorization header on redirect.
+ */
+export const PRODUCTION_API_URL = 'https://grace.zeeshstudios.in';
 
 /** Local dev backend — used only when explicitly selected (local development). */
 export const LOCAL_API_URL = 'http://localhost:8787';
