@@ -112,9 +112,14 @@ class GraceTuiApp(App):
 
     def _on_store_change(self) -> None:
         # Store notifications can arrive from the agent worker thread — route
-        # the re-render back to the Textual event loop.
+        # the re-render back to the Textual event loop. When the store is
+        # mutated from the UI thread itself (key presses), call_from_thread
+        # raises RuntimeError ("must run in a different thread from the app")
+        # — render inline instead, or typing would never appear on screen.
         try:
             self.call_from_thread(self._render)
+        except RuntimeError:
+            self._render()
         except Exception:
             pass
 
@@ -453,7 +458,9 @@ class GraceTuiApp(App):
     def on_key(self, event: Key) -> None:
         store = self.store
         key = event.key
-        char = event.char
+        # Textual >= 8.x renamed Key.char to Key.character; accessing the old
+        # name raises AttributeError on every key press and crashes the TUI.
+        char = event.character
 
         def handled():
             event.stop()
