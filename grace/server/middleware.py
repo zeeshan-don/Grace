@@ -11,6 +11,7 @@ from grace.server.log import log_api_event
 from grace.server.types import HttpError
 
 POSTGRES_SCHEMA_CODES = {"42P01", "42703"}
+POSTGRES_PRIVILEGE_CODES = {"42501"}
 
 
 def _is_postgres_schema_error(err: Exception) -> bool:
@@ -23,6 +24,15 @@ def _is_postgres_schema_error(err: Exception) -> bool:
     """
     code = getattr(err, "code", None) or getattr(err, "sqlstate", None)
     return code in POSTGRES_SCHEMA_CODES
+
+
+def _is_postgres_privilege_error(err: Exception) -> bool:
+    """True when the DATABASE_URL role can connect but has no privileges on a
+    table/schema (42501 insufficient_privilege) — a misconfigured deployment
+    (wrong role, wrong database, missing grants), not a code bug. Surfaced as
+    an actionable 503 instead of a mystery 500."""
+    code = getattr(err, "code", None) or getattr(err, "sqlstate", None)
+    return code in POSTGRES_PRIVILEGE_CODES
 
 
 def cors_origin() -> str:
@@ -98,6 +108,22 @@ def with_http(handler):
                             "The server database is missing required tables or columns — run "
                             "the database migrations (db/migrations/*.sql) and redeploy. "
                             "Details were logged server-side."
+                        ),
+                    }
+                )
+            elif _is_postgres_privilege_error(err):
+                # The DATABASE_URL role connects but cannot touch the tables —
+                # a misconfigured DATABASE_URL (wrong role/database) or missing
+                # grants, not a code bug. Actionable 503; the SQLSTATE goes to
+                # the log only.
+                status = 503
+                error_detail = str(err)
+                res.status(503).json(
+                    {
+                        "error": (
+                            "The server database user cannot access the required tables — check "
+                            "the DATABASE_URL role and grants (the migrations must be applied "
+                            "by a role with privileges on the database). Details were logged server-side."
                         ),
                     }
                 )

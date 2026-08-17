@@ -20,7 +20,7 @@ from grace.server import auth as auth_guard
 from grace.server.auth_service import AuthError, AuthService, normalize_email
 from grace.server.beta import beta_access_for
 from grace.server.cost_guard import CostGuardService
-from grace.server.db import get_db
+from grace.server.db import DbError, get_db
 from grace.server.free_sessions import FreeSessionService, seconds_until_utc_midnight
 from grace.server.log import log_api_event
 from grace.server.providers import describe_server_router, run_server_chat
@@ -102,6 +102,11 @@ def register_handler(req: dict, res) -> None:
         res.status(201).json({"user": to_api_user(result["user"]), "token": result["token"], "expires_at": result["expiresAt"]})
     except AuthError as err:
         return res.status(err.status).json({"error": err.message})
+    except DbError:
+        # Let the middleware map schema (42P01/42703) and privilege (42501)
+        # failures to an actionable 503 — a silent 500 hides unapplied
+        # migrations or a misconfigured DATABASE_URL.
+        raise
     except Exception:
         res.status(500).json({"error": "Could not create the account."})
 
@@ -126,6 +131,10 @@ def login_handler(req: dict, res) -> None:
         res.status(200).json({"user": to_api_user(result["user"]), "token": result["token"], "expires_at": result["expiresAt"]})
     except AuthError as err:
         return res.status(err.status).json({"error": err.message})
+    except DbError:
+        # Same as register: surface DB schema/privilege failures as 503, not a
+        # silent 500 that reads as a mystery backend crash.
+        raise
     except Exception:
         res.status(500).json({"error": "Could not log in."})
 
@@ -207,6 +216,8 @@ def record_usage(req: dict, res) -> None:
         res.status(201).json({"recorded": True, "run_id": run_id})
     except UsageError as err:
         return res.status(err.status).json({"error": err.message})
+    except DbError:
+        raise
     except Exception:
         res.status(500).json({"error": "Could not record usage."})
 
@@ -233,6 +244,8 @@ def list_usage(req: dict, res) -> None:
         # consumes a session.
         session_state = FreeSessionService(db).get_state(auth_result["user"]["id"])
         res.status(200).json({"usage": rows, **session_state})
+    except DbError:
+        raise
     except Exception:
         res.status(500).json({"error": "Could not load usage."})
 

@@ -37,6 +37,13 @@ class DbError(Exception):
         self.sqlstate = sqlstate
         self.code = sqlstate  # mirrors the TS `err.code` accessor
 
+    def __str__(self) -> str:
+        """"<SQLSTATE>: <message>" — the middleware logs str(err), so the
+        server-side log line shows the actual Postgres error class (e.g.
+        "42501: permission denied for table users") instead of a bare message
+        with no way to tell a permission issue from a schema issue."""
+        return f"{self.sqlstate}: {self.args[0] if self.args else ''}"
+
 
 def create_psycopg_db(connection_string: str) -> Db:
     """Build a Db callable backed by a lazily-created psycopg 3 connection.

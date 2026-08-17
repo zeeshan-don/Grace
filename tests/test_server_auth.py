@@ -225,3 +225,72 @@ def test_bearer_token_extraction():
     assert bearer_token({"headers": {"authorization": "bearer  abc123 "}}) == "abc123"
     assert bearer_token({"headers": {"authorization": "Basic abc"}}) == ""
     assert bearer_token({"headers": {}}) == ""
+
+
+# ---------------------------------------------------------------------------
+# Database failure mapping (schema/privilege errors must never be a mystery 500)
+# ---------------------------------------------------------------------------
+
+def _raise_db(sqlstate: str, message: str):
+    from grace.server.db import DbError
+    from grace.server.db import set_db_for_tests
+
+    def db(sql: str, params: list | None = None):
+        raise DbError(sqlstate, message)
+
+    set_db_for_tests(db)
+    return db
+
+
+def test_register_db_schema_error_is_503_not_500(wsgi_app):
+    """A missing table/column (unapplied migration) must surface as the
+    actionable 503 with the migration hint — not a silent 500 that reads as a
+    mystery backend crash."""
+    _raise_db("42P01", 'relation "daily_cost" does not exist')
+    res = _register(wsgi_app)
+    assert res.status == 503
+    assert "migrations" in res.json["error"]
+
+
+def test_register_db_privilege_error_is_503_not_500(wsgi_app):
+    """A DATABASE_URL role that can connect but cannot touch the tables
+    (42501) must surface as an actionable 503 about grants — the failure mode
+    seen on misconfigured deployments."""
+    _raise_db("42501", "permission denied for table users")
+    res = _register(wsgi_app)
+    assert res.status == 503
+    assert "DATABASE_URL" in res.json["error"]
+
+
+def test_login_db_schema_error_is_503_not_500(wsgi_app):
+    _raise_db("42P01", 'relation "users" does not exist')
+    res = wsgi_call(wsgi_app, "POST", "/api/auth/login", headers=AUTH_HEADERS, body={"email": "a@example.com", "password": "password123"})
+    assert res.status == 503
+    assert "migrations" in res.json["error"]
+
+
+def test_me_db_schema_error_is_503_not_500(wsgi_app):
+    """Protected endpoints (middleware path) already mapped schema errors to
+    503; pin that behavior so it does not regress."""
+    _raise_db("42P01", 'relation "sessions" does not exist')
+    res = wsgi_call(wsgi_app, "GET", "/api/auth/me", headers={"Authorization": "Bearer sometoken"})
+    assert res.status == 503
+    assert "migrations" in res.json["error"]
+
+
+def test_non_schema_db_error_stays_500(wsgi_app):
+    """Genuinely unexpected DB errors (e.g. connection reset with no SQLSTATE)
+    still return the generic 500 — only schema/privilege classes are mapped."""
+    _raise_db("XXXXX", "connection reset")
+    res = _register(wsgi_app)
+    assert res.status == 500
+    assert res.json["error"] == "Internal server error."
+
+
+def test_dberror_str_includes_sqlstate():
+    from grace.server.db import DbError
+
+    err = DbError("42501", "permission denied for table users")
+    assert str(err) == "42501: permission denied for table users"
+    assert err.code == "42501"
+    assert err.sqlstate == "42501"
