@@ -1,0 +1,36 @@
+# CODEOWNERS
+#
+# Every line below uses the placeholder @YOUR_GITHUB_USERNAME.
+# GitHub usernames must be replaced with real accounts before CODEOWNERS
+# takes effect — a placeholder is ignored (and blocks review assignments).
+# Replace every @YOUR_GITHUB_USERNAME with the repository maintainer's
+# GitHub username, and add subsystem maintainers as the project grows.
+#
+# Syntax: <path> <owner> [<owner>...]
+# See https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner: the repository maintainer.
+* @YOUR_GITHUB_USERNAME
+
+# Agent behavior: agent loop, coordinator, planner, routers, subagents.
+/grace/agent/ @YOUR_GITHUB_USERNAME
+/grace/agents/ @YOUR_GITHUB_USERNAME
+
+# Model providers and the fallback chain.
+/grace/providers/ @YOUR_GITHUB_USERNAME
+
+# Agent tools (read/write/edit/search/run/git/web) and safety policy.
+/grace/tools/ @YOUR_GITHUB_USERNAME
+/grace/safety.py @YOUR_GITHUB_USERNAME
+
+# Full-screen Textual TUI.
+/grace/cli/tui/ @YOUR_GITHUB_USERNAME
+
+# Python backend: WSGI app, auth, sessions, free tier, cost guard, providers.
+/grace/server/ @YOUR_GITHUB_USERNAME
+
+# Vercel API functions.
+/api/ @YOUR_GITHUB_USERNAME
+
+# Test suite.
+/tests/ @YOUR_GITHUB_USERNAME

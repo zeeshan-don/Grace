@@ -683,6 +683,28 @@ controls infrastructure spend:
   `docs/deployment.md`). Ads, payments, subscriptions and dashboards remain out
   of scope by design (Milestones 15–16).
 
+## Contributing
+
+Grace is an open-source project, and community contributions are welcome —
+bug reports, feature ideas, documentation, tests, and code. Before you start,
+please read:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to set up the project, run the
+  tests, and submit a pull request
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community standards
+- [SECURITY.md](SECURITY.md) — how to report security vulnerabilities
+  privately (never in a public issue)
+- [docs/development.md](docs/development.md) — the project from a
+  contributor's perspective
+- [docs/architecture.md](docs/architecture.md) — how the pieces fit together
+- [docs/roadmap.md](docs/roadmap.md) — where the project is heading
+
+**Please be careful:** Grace is a coding agent that reads, writes, and edits
+files, runs commands, and interacts with git. Always test it in a safe,
+disposable development repository — never on projects you cannot afford to
+lose. Never include secrets, API keys, or credentials in issues or pull
+requests.
+
 ## License
 
 MIT

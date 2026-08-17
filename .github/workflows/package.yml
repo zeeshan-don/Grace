@@ -1,0 +1,37 @@
+name: Package build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Build sdist and wheel from a clean checkout
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build the package
+        run: python -m build
+
+      - name: Verify the built artifacts exist
+        run: |
+          ls -la dist/
+          test -n "$(find dist -name 'grace-*.tar.gz')"
+          test -n "$(find dist -name 'grace-*.whl')"
+
+      # This workflow only validates that the package builds. It never
+      # publishes to PyPI or any other registry.

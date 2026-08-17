@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install project and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run the test suite
+        run: python -m pytest
+
+      - name: Compile check (grace, api, tests)
+        run: python -m compileall -q grace api tests
+
+      - name: Verify the package builds
+        run: |
+          pip install build
+          python -m build
+          ls -la dist/
+          test -n "$(find dist -name 'grace-*.tar.gz')"
+          test -n "$(find dist -name 'grace-*.whl')"

@@ -1,0 +1,16 @@
+# Issue template chooser configuration.
+#
+# NOTE: contact_links requires absolute URLs — relative repo paths do not
+# render in the chooser. Replace YOUR_GITHUB_USERNAME below with the actual
+# repository owner (and the real default-branch name if it is not `main`)
+# before relying on this file.
+
+blank_issues_enabled: true
+
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/YOUR_GITHUB_USERNAME/grace/blob/main/CONTRIBUTING.md
+    about: Read the contributor guide before opening an issue or pull request.
+  - name: Security policy
+    url: https://github.com/YOUR_GITHUB_USERNAME/grace/blob/main/SECURITY.md
+    about: Report security vulnerabilities privately — never in a public issue.
