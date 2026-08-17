@@ -120,7 +120,8 @@ class FreeSessionService:
             if _is_active(last, now):
                 self.db(
                     "UPDATE free_sessions SET ended_at = %s WHERE id = %s AND ended_at IS NULL",
-                    [last["id"], now.astimezone(timezone.utc).isoformat()],
+                    # psycopg binds positionally in SQL-text order: ended_at, then id.
+                    [now.astimezone(timezone.utc).isoformat(), last["id"]],
                 )
             else:
                 self._mark_ended(last)  # lazy end of an already-expired session
@@ -272,7 +273,10 @@ def _to_free_session_row(row: dict) -> dict:
         "session_number": int(row.get("session_number")),
         "started_at": str(row.get("started_at")),
         "expires_at": str(row.get("expires_at")),
-        "ended_at": row.get("ended_at") if row.get("ended_at") is not None else None,
+        # str() like the other timestamps: psycopg returns a tz-aware datetime
+        # object, which _iso_ms (str.replace) cannot parse — without this an
+        # explicitly ended session is still reported as active.
+        "ended_at": str(row.get("ended_at")) if row.get("ended_at") is not None else None,
     }
 
 

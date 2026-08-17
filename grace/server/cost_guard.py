@@ -217,7 +217,8 @@ class CostGuardService:
             "        version = version + 1,"
             "        updated_at = now()"
             "  WHERE user_id = %s AND day = %s",
-            [reservation["userId"], reservation["day"], actual_micros, reservation["reservedMicros"]],
+            # psycopg binds positionally in SQL-text order: +spent, -reserved, user_id, day.
+            [actual_micros, reservation["reservedMicros"], reservation["userId"], reservation["day"]],
         )
 
         self.db(
@@ -227,7 +228,7 @@ class CostGuardService:
             "        version = version + 1,"
             "        updated_at = now()"
             "  WHERE period_type = %s AND period = %s",
-            ["day", reservation["day"], actual_micros, reservation["reservedMicros"]],
+            [actual_micros, reservation["reservedMicros"], "day", reservation["day"]],
         )
         self.db(
             "UPDATE global_cost"
@@ -236,7 +237,7 @@ class CostGuardService:
             "        version = version + 1,"
             "        updated_at = now()"
             "  WHERE period_type = %s AND period = %s",
-            ["month", reservation["month"], actual_micros, reservation["reservedMicros"]],
+            [actual_micros, reservation["reservedMicros"], "month", reservation["month"]],
         )
 
         if outcome:
@@ -299,7 +300,7 @@ class CostGuardService:
             "        version = version + 1,"
             "        updated_at = now()"
             "  WHERE user_id = %s AND day = %s",
-            [user_id, day, micros],
+            [micros, user_id, day],
         )
 
     def _read_global(self, period_type: str, period: str) -> dict:
@@ -336,7 +337,7 @@ class CostGuardService:
             "        version = version + 1,"
             "        updated_at = now()"
             "  WHERE period_type = %s AND period = %s",
-            [period_type, period, micros],
+            [micros, period_type, period],
         )
 
     def _daily_refusal(self, now: datetime) -> dict:

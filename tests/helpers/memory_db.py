@@ -187,12 +187,16 @@ def create_memory_db():
                 for s in rows
             ]
         if "UPDATE free_sessions" in sql:
-            row_id = params[0]
+            # Lazy end (_mark_ended) passes only the id → ended_at = expires_at.
+            # Explicit end (end_active_session) passes [ended_at, id] in SQL-text
+            # order (psycopg is positional).
+            if len(params) > 1:
+                ended_at, row_id = params[0], params[1]
+            else:
+                ended_at, row_id = None, params[0]
             row = next((s for s in state["free_sessions"] if s["id"] == row_id), None)
             if row and row["ended_at"] is None:
-                # Lazy end (markEnded) passes only the id → ended_at = expires_at.
-                # Explicit end (POST /api/session/end) passes the end timestamp as $2.
-                row["ended_at"] = params[1] if len(params) > 1 and params[1] is not None else row["expires_at"]
+                row["ended_at"] = ended_at if ended_at is not None else row["expires_at"]
             return []
 
         # ---- CostGuardService ----------------------------------------------
@@ -208,12 +212,13 @@ def create_memory_db():
             state["daily_costs"].append({"user_id": user_id, "day": day, "spent": 0, "reserved": micros, "version": 1})
             return [{"user_id": user_id}]
         if "UPDATE daily_cost" in sql:
-            # Settle passes 4 params [user, day, spentDelta, reservedDelta]; the
-            # release path passes 3 [user, day, reservedDelta].
-            user_id, day = params[0], params[1]
-            is_settle = len(params) >= 4
-            spent_delta = params[2] if is_settle else 0
-            reserved_delta = params[3] if is_settle else params[2]
+            # Settle passes 4 params in SQL-text order [spentDelta, reservedDelta,
+            # user_id, day]; the release path passes 3 [reservedDelta, user_id, day].
+            if len(params) >= 4:
+                spent_delta, reserved_delta, user_id, day = params[0], params[1], params[2], params[3]
+            else:
+                reserved_delta, user_id, day = params[0], params[1], params[2]
+                spent_delta = 0
             reserved_delta = reserved_delta or 0
             row = next((r for r in state["daily_costs"] if r["user_id"] == user_id and r["day"] == day), None)
             if row:
@@ -237,10 +242,14 @@ def create_memory_db():
             state["global_costs"].append({"period_type": period_type, "period": period, "spent": 0, "reserved": micros, "version": 1})
             return [{"period_type": period_type}]
         if "UPDATE global_cost" in sql:
-            period_type, period = params[0], params[1]
-            is_settle = len(params) >= 4
-            spent_delta = params[2] if is_settle else 0
-            reserved_delta = params[3] if is_settle else params[2]
+            # Same text-order contract as daily_cost: settle = [spentDelta,
+            # reservedDelta, period_type, period]; release = [reservedDelta,
+            # period_type, period].
+            if len(params) >= 4:
+                spent_delta, reserved_delta, period_type, period = params[0], params[1], params[2], params[3]
+            else:
+                reserved_delta, period_type, period = params[0], params[1], params[2]
+                spent_delta = 0
             reserved_delta = reserved_delta or 0
             row = next((r for r in state["global_costs"] if r["period_type"] == period_type and r["period"] == period), None)
             if row:
