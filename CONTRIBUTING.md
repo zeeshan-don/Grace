@@ -63,8 +63,8 @@ tests/           pytest suite (unit, agent loop, server, TUI, CLI)
 
 ## Supported Python version
 
-Grace requires **Python ≥ 3.10** (see `requires-python` in `pyproject.toml`).
-CI runs the test suite on Python 3.10, 3.11, 3.12, and 3.13. Use a recent
+Grace requires **Python ≥ 3.12** (see `requires-python` in `pyproject.toml`).
+CI runs the test suite on Python  3.12, and 3.13. Use a recent
 3.12 or 3.13 for local development unless you are specifically testing an
 older version.
 
