@@ -9,7 +9,14 @@ app routes into the activity feed.
 import os
 
 from grace.cli.auth_commands import cmd_logout, cmd_whoami
-from grace.cli.commands import cmd_diff, cmd_model, cmd_provider, cmd_reset, cmd_status, cmd_undo
+from grace.cli.commands import (
+    cmd_diff,
+    cmd_model,
+    cmd_provider,
+    cmd_reset,
+    cmd_status,
+    cmd_undo,
+)
 from grace.verbose import is_verbose, set_verbose, toggle_verbose
 
 

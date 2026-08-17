@@ -13,7 +13,6 @@ import re
 from grace.cli.tui.app import GraceTuiApp
 from grace.cli.tui.store import TuiStore
 
-
 _MARKUP = re.compile(r"\[/?[^\]]*\]")
 
 
@@ -66,7 +65,7 @@ def _body(store, app) -> str:
 def test_home_screen_renders_wordmark_and_hint():
     async def drive():
         store, runner, app = _make()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             # Wordmark renders as block letters (80x24 test size) or the
             # compact "G   R   A   C   E" on small terminals.
@@ -84,7 +83,7 @@ def test_activity_feed_shows_user_prompt_separated_from_activity():
         store.mode = "session"
         store.push("user", "Inspect package.json and find any bugs")
         store.push_pending("Reading package.json", kind="tool")
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "› Inspect package.json and find any bugs" in body
             assert "Reading package.json" in body
@@ -100,7 +99,7 @@ def test_tool_line_settles_in_place_into_check():
         store.push("user", "check package.json")
         item_id = store.push_pending("Reading package.json", meta={})
         store.finish_pending(item_id, ok=True, text="Read package.json")
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "Read package.json" in body
             assert "Reading package.json" not in body  # settled in place
@@ -117,7 +116,7 @@ def test_answer_block_stands_apart_from_activity():
         store.push_pending("Reading api/provider.py", kind="tool")
         store.push("result", "✓ Done")
         store.push("result", "Fixed the bug by adding a guard clause.")
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "✓ Done" in body
             assert "Fixed the bug by adding a guard clause." in body
@@ -134,7 +133,7 @@ def test_working_status_line_renders_while_busy():
         store.push("user", "run the tests")
         store.set_busy(True)
         store.set_working_status("Working")
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "●" in body and "Working" in body
         return store
@@ -151,7 +150,7 @@ def test_user_prompt_is_pinned_when_feed_overflows():
         store.push("user", "Inspect package.json and find any bugs")
         for i in range(30):
             store.push("result", f"answer line {i} with some detail about what was found")
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "› Inspect package.json and find any bugs" in body
         return store
@@ -165,7 +164,7 @@ def test_brackets_in_user_text_are_escaped_from_markup():
         store, runner, app = _make()
         store.mode = "session"
         store.push("user", "fix [bug] #42")
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "fix \\[bug] #42" in body  # escaped opening bracket
         return store
@@ -186,7 +185,7 @@ def test_ascii_mode_renders_ok_x_markers(monkeypatch):
             store.push("user", "check")
             store.push("success", "Read package.json")
             store.push("error", "Running tests")
-            async with app.run_test() as pilot:
+            async with app.run_test():
                 body = _body(store, app)
                 # The ASCII fallback markers survive as literal text (they are
                 # separate markup spans, so assert on the escaped fragments).
@@ -209,7 +208,7 @@ def test_working_status_clears_when_task_done():
         store.set_busy(True)
         store.set_working_status("Working")
         store.set_busy(False)
-        async with app.run_test() as pilot:
+        async with app.run_test():
             body = _body(store, app)
             assert "Working" not in body
         return store
@@ -220,7 +219,7 @@ def test_working_status_clears_when_task_done():
 def test_input_bar_placeholder_and_fixed_position():
     async def drive():
         store, runner, app = _make()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             rendered = app._render_input()
             assert "Enter a coding task or / for commands" in rendered
             # The input is a bordered box, not a bare prompt line.
@@ -240,7 +239,7 @@ def test_input_bar_placeholder_and_fixed_position():
 def test_input_box_stays_aligned_while_typing():
     async def drive():
         store, runner, app = _make()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             store.insert("hey")
             rendered = app._render_input()
             widths = {len(_visible(line)) for line in rendered.split("\n")}
@@ -270,7 +269,7 @@ def test_all_tui_modules_import_cleanly():
 def test_header_shows_model_and_session_status():
     async def drive():
         store, runner, app = _make()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             header = app._render_header()
             assert "GRACE" in header
             assert "gpt-oss-20b" in header

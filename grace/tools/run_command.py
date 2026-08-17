@@ -3,7 +3,6 @@
 import os
 import re
 import subprocess
-import sys
 
 from grace.safety import assess_command, redact_secrets
 from grace.tools.tool import Tool

@@ -33,7 +33,12 @@ import os
 from datetime import datetime, timezone
 
 from grace.costs.money import inr_to_usd_micros
-from grace.costs.pricing import estimate_cost_micros, output_micros_per_1m_for, price_for_model, tier_for_context
+from grace.costs.pricing import (
+    estimate_cost_micros,
+    output_micros_per_1m_for,
+    price_for_model,
+    tier_for_context,
+)
 from grace.server.db import Db
 from grace.server.free_sessions import utc_day
 

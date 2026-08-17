@@ -290,13 +290,13 @@ def collapse_lines(input_text: str, opts: dict | None = None) -> str:
     max_lines = 500 if opts.get("verbose") else (opts.get("max") or 40)
     lines = input_text.replace("\r\n", "\n").split("\n")
     if len(lines) <= max_lines:
-        return "\n".join(f"  {l}" for l in lines)
+        return "\n".join(f"  {line}" for line in lines)
     sym = symbols()
     th = theme()
     head = lines[: max(0, max_lines - 2)]
     hidden = len(lines) - len(head)
     tail = "  " + th["dim"](f"[{hidden} line(s) hidden — use /verbose to show]")
-    return "\n".join([*[f"  {l}" for l in head], "  " + sym["ellipsis"], tail])
+    return "\n".join([*[f"  {line}" for line in head], "  " + sym["ellipsis"], tail])
 
 
 def output_count_line(label: str, lines: int) -> str:

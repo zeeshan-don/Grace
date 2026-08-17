@@ -1,7 +1,6 @@
 """edit_file tool (port of src/tools/editFile.ts)."""
 
 import json
-import os
 
 from grace.project.walker import rel_from
 from grace.safety import is_protected_path, resolve_in_project

@@ -4,9 +4,13 @@ API and no keys are used."""
 import pytest
 
 from grace.agents.model_router import server_routing_preference
-from grace.providers.errors import ProviderError, describe_category, is_fallback_eligible
+from grace.providers.errors import (
+    ProviderError,
+    describe_category,
+    is_fallback_eligible,
+)
 from grace.providers.fallback import FallbackProvider
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo
+from grace.providers.types import ChatMessage, ChatResult, ModelInfo
 
 MSGS = [ChatMessage(role="user", content="hi")]
 

@@ -81,5 +81,5 @@ def git_summary(root: str) -> dict:
     if not repo:
         return {"branch": None, "statusLines": 0, "hasChanges": False, "isRepo": False}
     short = status_short(root)
-    status_lines = len([l for l in short.split("\n") if l.strip()])
+    status_lines = len([line for line in short.split("\n") if line.strip()])
     return {"branch": current_branch(root), "statusLines": status_lines, "hasChanges": status_lines > 0, "isRepo": True}

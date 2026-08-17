@@ -5,9 +5,7 @@ semantics and the global circuit breaker — service-level with an injected
 clock plus one endpoint-level refusal test.
 """
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import datetime, timezone
 
 from grace.costs.money import inr_to_usd_micros
 from grace.server.cost_guard import CostGuardService

@@ -52,7 +52,7 @@ def choose_logo_for(columns: int, rows: int) -> dict:
     if rows >= 13 and columns >= full_width + 2:
         return {"lines": full, "width": full_width}
     compact = compact_lines()
-    return {"lines": compact, "width": max(len(l) for l in compact)}
+    return {"lines": compact, "width": max(len(line) for line in compact)}
 
 
 def wordmark() -> str:

@@ -7,7 +7,11 @@ and the /api/provider daily-limit gate through the WSGI app.
 
 from datetime import datetime, timedelta, timezone
 
-from grace.server.free_sessions import FreeSessionService, seconds_until_utc_midnight, utc_day
+from grace.server.free_sessions import (
+    FreeSessionService,
+    seconds_until_utc_midnight,
+    utc_day,
+)
 from tests.helpers.wsgi_client import wsgi_call
 
 NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)

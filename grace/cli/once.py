@@ -1,7 +1,6 @@
 """One-shot mode (port of src/cli/once.ts): `grace \"prompt\"`."""
 
 import os
-import sys
 
 from grace.cli.task_runner import run_task
 from grace.colors import c

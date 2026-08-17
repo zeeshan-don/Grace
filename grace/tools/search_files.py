@@ -1,6 +1,5 @@
 """search_files tool (port of src/tools/searchFiles.ts)."""
 
-import os
 import re
 import subprocess
 

@@ -1,6 +1,5 @@
 """Tool tests: read/write/edit/search/list + run_command policy."""
 
-import json
 
 from grace.tools.edit_file import create_edit_file_tool
 from grace.tools.list_directory import create_list_directory_tool
@@ -20,7 +19,7 @@ def test_write_and_read_roundtrip(tmp_path):
     write = create_write_file_tool(ctx)
     read = create_read_file_tool(ctx)
 
-    out = write.execute({"path": "hello.py", "content": "print('hi')\n"}, ctx)
+    write.execute({"path": "hello.py", "content": "print('hi')\n"}, ctx)
     assert (tmp_path / "hello.py").read_text(encoding="utf-8") == "print('hi')\n"
 
     content = read.execute({"path": "hello.py"}, ctx)
@@ -47,7 +46,7 @@ def test_edit_file_replaces_exact(tmp_path):
     target = tmp_path / "a.txt"
     target.write_text("line one\nline two\n", encoding="utf-8")
     edit = create_edit_file_tool(ctx)
-    out = edit.execute({
+    edit.execute({
         "path": "a.txt",
         "edits": [{"oldString": "line one", "newString": "line ONE"}],
     }, ctx)

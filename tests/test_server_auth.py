@@ -232,8 +232,7 @@ def test_bearer_token_extraction():
 # ---------------------------------------------------------------------------
 
 def _raise_db(sqlstate: str, message: str):
-    from grace.server.db import DbError
-    from grace.server.db import set_db_for_tests
+    from grace.server.db import DbError, set_db_for_tests
 
     def db(sql: str, params: list | None = None):
         raise DbError(sqlstate, message)

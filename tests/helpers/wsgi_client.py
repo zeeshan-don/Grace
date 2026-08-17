@@ -7,8 +7,6 @@ no network, deterministic.
 
 import json
 
-import wsgiref.util
-
 
 class WsgiResponse:
     def __init__(self, status_line: str, headers: list, body: bytes) -> None:

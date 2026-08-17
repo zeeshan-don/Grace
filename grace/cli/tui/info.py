@@ -9,7 +9,11 @@ import os
 
 from grace.auth.client import ApiClient
 from grace.auth.session import load_session, session_expired
-from grace.cli.free_plan import banner_free_plan_line, format_countdown, session_seconds_left
+from grace.cli.free_plan import (
+    banner_free_plan_line,
+    format_countdown,
+    session_seconds_left,
+)
 from grace.cli.ui.theme import strip_ansi
 from grace.meta import VERSION
 from grace.providers.remote import RemoteProvider

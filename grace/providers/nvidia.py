@@ -1,13 +1,22 @@
 """NVIDIA NIM provider (port of src/providers/nvidia.ts) — OpenAI-compatible API via requests."""
 
-import json
 import random
 import string
 
 import requests
 
 from grace.providers.errors import ProviderError, scrub
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent, ToolCallParam, Usage, as_chat_messages, as_chat_options
+from grace.providers.types import (
+    ChatMessage,
+    ChatOptions,
+    ChatResult,
+    ModelInfo,
+    StreamEvent,
+    ToolCallParam,
+    Usage,
+    as_chat_messages,
+    as_chat_options,
+)
 
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_NVIDIA_MODEL = "openai/gpt-oss-20b"

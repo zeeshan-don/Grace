@@ -1,6 +1,5 @@
 """Shared fixtures for the backend integration tests (grace/server)."""
 
-import os
 import threading
 
 import pytest

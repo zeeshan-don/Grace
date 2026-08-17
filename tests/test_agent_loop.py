@@ -1,12 +1,11 @@
 """Agent loop tests (port of tests/agent.loop.test.ts) using a scripted fake
 provider — no real API, no keys."""
 
-import tempfile
 
 from grace.agent.loop import AgentLoop
 from grace.agent.tool_cache import ToolCache
 from grace.agent.tool_call import ToolCallParseError, parse_tool_call_arguments
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent, Usage
+from grace.providers.types import ChatResult, ModelInfo, StreamEvent, Usage
 from grace.session.memory import MemorySession
 
 

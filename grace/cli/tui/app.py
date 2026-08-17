@@ -128,7 +128,6 @@ class GraceTuiApp(App):
     # ---------------------------------------------------------------------
 
     def _render(self) -> None:
-        store = self.store
         self._header.update(self._render_header())
         self._body.update(self._render_body())
         self._input.update(self._render_input())
@@ -215,7 +214,7 @@ class GraceTuiApp(App):
 
         logo = choose_logo_for(columns, rows)
         if rows < 18:
-            logo = {"lines": compact_lines(), "width": max(len(l) for l in compact_lines())}
+            logo = {"lines": compact_lines(), "width": max(len(line) for line in compact_lines())}
         lines = logo["lines"]
 
         out: list[str] = []

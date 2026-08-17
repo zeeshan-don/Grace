@@ -5,7 +5,17 @@ import json
 import requests
 
 from grace.providers.errors import ProviderError, scrub
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent, ToolCallParam, Usage, as_chat_messages, as_chat_options
+from grace.providers.types import (
+    ChatMessage,
+    ChatOptions,
+    ChatResult,
+    ModelInfo,
+    StreamEvent,
+    ToolCallParam,
+    Usage,
+    as_chat_messages,
+    as_chat_options,
+)
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"

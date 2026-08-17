@@ -4,7 +4,12 @@ import json
 import stat
 from datetime import datetime, timedelta, timezone
 
-from grace.auth.session import clear_session, load_session, save_session, session_expired
+from grace.auth.session import (
+    clear_session,
+    load_session,
+    save_session,
+    session_expired,
+)
 from grace.session.session import Session
 from grace.session.undo import UndoStore
 
@@ -88,7 +93,6 @@ def test_session_clear(tmp_path):
 
 
 def load_session2(root):
-    import json
 
     from pathlib import Path
 
