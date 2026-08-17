@@ -33,8 +33,14 @@ talks to this backend only for accounts + usage reporting (`grace login`).
    honors across every builder generation; `pyproject.toml` is used by the
    CLI locally (including textual). If `/api/health` returns Vercel's
    platform-level `FUNCTION_INVOCATION_FAILED` 500 after a deploy, the
-   functions could not import their dependencies — redeploy with
-   `requirements.txt` present.
+   functions crashed while importing. The two known causes:
+   - **Missing dependencies** — redeploy with `requirements.txt` present.
+   - **Entrypoint bootstrap** — Vercel loads each `api/*.py` from its file
+     path with only the repo root (and site-packages) on `sys.path`, so the
+     old `import _boot` (the module lives inside `api/`) could not resolve
+     and every endpoint died at invocation. The entrypoints now add `api/`
+     and the repo root to `sys.path` themselves — do **not** reintroduce
+     `import _boot` in an entrypoint.
 3. `vercel link` (create a new project, e.g. `grace-python-staging` for the
    staging deployment). `vercel.json` sets a 60s max duration for the Python
    functions.
@@ -170,7 +176,7 @@ grace logout
 
 ```bash
 pip install -e ".[dev]"          # install the CLI + backend + pytest
-python -m pytest                 # full test suite (154 tests incl. backend)
+python -m pytest                 # full test suite (166 tests incl. backend)
 python -m grace.server.serve     # local backend at http://localhost:8787
 curl http://localhost:8787/api/health
 ```
