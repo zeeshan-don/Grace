@@ -235,6 +235,11 @@ def run_repl(opts: dict | None = None) -> int:
         return run_tui(root, opts)
     except Exception as err:
         print(c.yellow(f"Full-screen interface unavailable ({err}) — using the classic prompt."))
+        if opts.get("verbose"):
+            # Dev/diagnosis: surface the real traceback instead of hiding it.
+            import traceback
+
+            traceback.print_exc()
         return _run_tty(root, opts)
 
 

@@ -13,12 +13,15 @@ from grace.cli.tui.commands import HOME_SHORTCUTS, SLASH_COMMANDS
 
 MAX_ACTIVITY = 2_000
 
-_next_id = [1]
+# NOTE: keep the counter under a DIFFERENT name than the function — the
+# `def` would otherwise shadow the list, making every call raise
+# "'function' object is not subscriptable" (TS→Python migration trap).
+_id_counter = [1]
 
 
 def _next_id() -> int:
-    _next_id[0] += 1
-    return _next_id[0]
+    _id_counter[0] += 1
+    return _id_counter[0]
 
 
 class TuiStore:
