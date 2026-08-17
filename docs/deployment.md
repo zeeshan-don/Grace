@@ -1,12 +1,17 @@
-# Deployment (Milestone 12 — closed beta)
+# Deployment (Python backend on Vercel + Neon)
 
-This document explains how to deploy the GRACE backend to **Vercel** with a
-**Neon PostgreSQL** database. It contains **no real secrets** — only
+This document explains how to deploy the **Python** GRACE backend to **Vercel**
+with a **Neon PostgreSQL** database. It contains **no real secrets** — only
 placeholders and instructions.
 
 ```
-LOCAL CLI  →  GRACE API (Vercel)  →  Neon PostgreSQL  →  Model Router → Groq → NVIDIA NIM → Gemini → MiniMax
+LOCAL CLI  →  GRACE API (Vercel, Python)  →  Neon PostgreSQL  →  Model Router → Groq → NVIDIA NIM → Gemini → MiniMax
 ```
+
+The backend is implemented in `grace/server/` (a WSGI app) and shipped as
+zero-config Python functions in `api/*.py`. The same handlers run locally via
+`python -m grace.server.serve`, so behavior is identical locally and in
+production.
 
 *With only `GROQ_API_KEY` set (required), `/api/provider` works exactly as
 before. Each additional key adds a fallback leg to the same request: NVIDIA
@@ -22,45 +27,32 @@ talks to this backend only for accounts + usage reporting (`grace login`).
 ## 1. Vercel setup
 
 1. Install the CLI: `npm i -g vercel`
-2. From the repo root, run `vercel` and follow the prompts (create a new
-   project, e.g. `zeesh-ai`). `vercel.json` sets a 60s max duration; the
-   Node.js runtime is auto-detected for the zero-config `api/*.ts` functions.
-3. Link the project for future deploys: `vercel link`
+2. From the repo root, run `npx vercel build` first — the log should show
+   **"Detected Python functions in api/"** and install the `pyproject.toml`
+   dependencies (requests, textual, psycopg).
+3. `vercel link` (create a new project, e.g. `grace-python-staging` for the
+   staging deployment). `vercel.json` sets a 60s max duration for the Python
+   functions.
 
-The API lives in `api/**/*.ts` (zero-config serverless functions). They bundle
-`src/` with esbuild, so the built `dist/` is **not** part of the deployment.
+The API lives in `api/**/*.py` (zero-config Python serverless functions). Each
+file maps to its route (`api/health.py` → `/api/health`,
+`api/auth/login.py` → `/api/auth/login`, …) and serves the shared WSGI app
+from `grace/server/`. There is **no** TypeScript backend in the repository —
+`src/` was removed after the Python migration was verified.
 
-> **GRACE is not a static site.** `vercel.json` declares the `api/**/*.ts`
-> serverless functions, contains **no** `framework` preset (Vercel auto-detects
-> "Other"), and **omits `outputDirectory` entirely** — this is the correct,
-> current config format (the legacy `builds` array in `vercel.json` is
-> deprecated).
+> **GRACE is not a static site.** `vercel.json` declares the `api/**/*.py`
+> serverless functions, contains **no** `framework` preset, and **omits
+> `outputDirectory` entirely**.
 >
-> **Never set an `outputDirectory` for an API-only project** — and in
-> particular never set it to `""` (empty string). `"outputDirectory": ""`
+> **Never set an `outputDirectory` for an API-only project** — `"outputDirectory": ""`
 > tells Vercel the repo root is static output; the deployment goes into
-> static-file mode, the zero-config serverless routes are never registered,
-> and every request (e.g. `GET /api/health`) returns Vercel's platform-level
-> **`NOT_FOUND`** 404 page (<https://vercel.com/docs/errors/not_found.md>)
-> instead of reaching your handlers. The correct `vercel.json` has **no**
-> `outputDirectory` key at all.
+> static-file mode, the serverless routes are never registered, and every
+> request returns Vercel's platform-level **`NOT_FOUND`** 404 page.
 >
-> **However, Vercel dashboard Project Settings take precedence over
-> `vercel.json`.** When the project is created with no framework detected
-> (the "Other" preset), Vercel stores `Output Directory: public` in the
-> project settings. Because that stored setting wins over the absent
-> `outputDirectory` in `vercel.json`, every build fails with
-> *"No Output Directory named 'public' found"* — `vercel.json` **cannot**
-> override it.
->
-> **Fix (one time, in the dashboard):** Project → **Settings → Build &
-> Development Settings** → clear the **Output Directory** field → **Save**,
-> then redeploy. Do **not** create a `public/` folder, and do not set an
-> Output Directory for an API-only project. If the project is not created
-> yet, when the CLI proposes `Output Directory: public`, decline/override it
-> and leave the field empty. If instead you hit the `NOT_FOUND` page above,
-> the fix is the same: ensure `vercel.json` has no `outputDirectory` key,
-> clear the dashboard field, and redeploy with `vercel --prod`.
+> **Vercel dashboard Project Settings take precedence over `vercel.json`.**
+> If the project stores `Output Directory: public` in its settings, clear the
+> **Output Directory** field (Project → Settings → Build & Development
+> Settings → Save) and redeploy. Do **not** create a `public/` folder.
 
 ## 2. Neon setup
 
@@ -75,7 +67,7 @@ Variables) for the `production` (and `preview`) environments:
 
 | Variable | Required | Purpose |
 | -------- | -------- | ------- |
-| `DATABASE_URL` | yes | Neon pooled connection string (`postgresql://…`) |
+| `DATABASE_URL` | yes | Neon pooled connection string (`postgresql://…`) — read by `grace/server/db.py` (psycopg 3) |
 | `GROQ_API_KEY` | yes | Server-side AI key for `/api/provider` (primary provider) — never exposed to clients |
 | `NVIDIA_API_KEY` | no* | Server-side provider (NVIDIA NIM) for `/api/provider` — never exposed to clients. Adds a fallback leg after Groq |
 | `GEMINI_API_KEY` | no* | Server-side fallback provider (Gemini, `gemini-3.1-flash-lite`) — never exposed to clients |
@@ -85,22 +77,25 @@ Variables) for the `production` (and `preview`) environments:
 | `ZEESH_CORS_ORIGIN` | no | Browser origin allowed to call the API (default `*`) |
 | `ZEESH_AUTH_RATE_LIMIT_MAX` | no | Auth attempts / 15 min per IP (default 50) |
 | `ZEESH_API_RATE_LIMIT_MAX` | no | API requests / min per IP (default 300) |
+| `ZEESH_DAILY_COST_LIMIT_INR` | no | Per-user daily cost ceiling, default ₹20 (`grace/server/cost_guard.py`) |
+| `ZEESH_INR_PER_USD` | no | INR→USD rate for the cost ceiling (default 83) |
+| `ZEESH_GLOBAL_DAILY_COST_LIMIT_INR` / `ZEESH_GLOBAL_MONTHLY_COST_LIMIT_INR` | no | Global circuit breakers (0 = disabled) |
 
 **Never** put client-side secrets here — the CLI must only ever receive its own
 session token.
 
 ### CLI-side configuration (each tester)
 
-The CLI reads `ZEESH_API_URL` to know which backend to log in to. **It now
-defaults to the deployed production backend** (`https://zeesh-ai.vercel.app`),
-so no configuration is needed to use production:
+The CLI reads `ZEESH_API_URL` to know which backend to log in to. It defaults
+to the deployed production backend, so no configuration is needed to use
+production:
 
 ```bash
-grace login   # → "GRACE backend: https://zeesh-ai.vercel.app"
+grace login   # → "GRACE backend: https://grace.zeeshstudios.in"
 ```
 
-Set `ZEESH_API_URL` **only** to opt into local development against
-`npm run serve`:
+Set `ZEESH_API_URL` **only** to opt into local development against the Python
+dev server:
 
 ```bash
 # per machine, in ~/.zeesh/env (or project .env)
@@ -128,14 +123,16 @@ SELECT COUNT(*) FROM users;          -- existing data untouched
 SELECT indexname FROM pg_indexes WHERE tablename IN ('users','sessions','agent_runs','usage','free_sessions');
 ```
 
-## 5. Production deployment
+## 5. Staging + production deployment
 
 ```bash
-vercel --prod          # deploy the linked project
+npx vercel build          # verify the Python function build locally
+npx vercel deploy --prebuilt   # staging/preview deployment
+npx vercel --prod         # promote to production once staging is verified
 ```
 
-First deploy: add the environment variables **before** running `vercel --prod`
-(or redeploy after adding them — env vars apply per deploy).
+First deploy: add the environment variables **before** deploying (env vars
+apply per deploy).
 
 ## 6. Verification commands
 
@@ -157,22 +154,34 @@ curl -X POST -H "Content-Type: application/json" \
 # 4. Whoami with the token
 curl -H "Authorization: Bearer <token>" https://<your-project>.vercel.app/api/auth/me
 
-# 5. CLI against production
+# 5. CLI against the deployed backend
 export ZEESH_API_URL=https://<your-project>.vercel.app
 grace login
 grace whoami
 grace logout
 ```
 
-## 7. Rollback considerations
+## 7. Local development
+
+```bash
+pip install -e ".[dev]"          # install the CLI + backend + pytest
+python -m pytest                 # full test suite (154 tests incl. backend)
+python -m grace.server.serve     # local backend at http://localhost:8787
+curl http://localhost:8787/api/health
+```
+
+`PORT` overrides the dev-server port: `PORT=9999 python -m grace.server.serve`.
+
+## 8. Rollback considerations
 
 - **Schema**: migrations are additive + idempotent. There is no destructive
   `DROP`/`ALTER … DROP COLUMN`; rolling back a migration means simply not
-  applying the next one. To revert a bad deploy, redeploy the previous
-  commit (`vercel --prod` again).
+  applying the next one. To revert a bad deploy, redeploy the previous commit.
 - **Data**: no migration deletes or rewrites existing rows. `users.is_beta`
   defaults to `false`; existing accounts are never locked out by the closed
   beta gate (the gate only affects new registrations).
+- **Passwords**: `grace/server/password.py` produces Node-scrypt-compatible
+  hashes, so accounts created by the TypeScript backend verify unchanged.
 - **Secrets**: if you ever suspect a key leaked, rotate it in Neon/Vercel and
   redeploy. The CLI stores only a session token (mode 0600) and the server
   stores only hashes.
@@ -181,15 +190,3 @@ grace logout
 - **Free-plan sessions** are enforced in Neon (`free_sessions`, migration
   004) and are safe across cold starts by design — the quota is server-side
   state, never per-instance memory.
-
-## Runtime notes
-
-- `package.json` `engines: ">=23.6.0"` applies to the **CLI** (it runs
-  TypeScript directly via native type stripping). The Vercel functions are
-  esbuild-bundled and run on Vercel's default Node.js runtime — they only use
-  Node 18+ features (`fetch`, `AbortSignal.timeout`), so the difference from
-  the CLI's Node version is expected and safe.
-- The middleware (`withHttp`) reassigns `res.status` to capture response
-  codes for logging — verified locally in tests and by `npm run smoke`; after
-  the first production deploy, sanity-check one response with
-  `curl -i <prod>/api/health` (headers + status + JSON body).

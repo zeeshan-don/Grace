@@ -70,9 +70,9 @@ class ApiClient:
                 timeout=self.timeout_ms / 1000,
             )
         except requests.exceptions.Timeout:
-            raise ApiError(0, f"The request timed out. Is the backend running? (npm run serve). Check ZEESH_API_URL if you changed it.")
+            raise ApiError(0, f"The request timed out. Is the backend running? (python -m grace.server.serve). Check ZEESH_API_URL if you changed it.")
         except requests.exceptions.RequestException:
-            raise ApiError(0, f"Could not reach {self.base_url}. Is the backend running? (npm run serve). Check ZEESH_API_URL if you changed it.")
+            raise ApiError(0, f"Could not reach {self.base_url}. Is the backend running? (python -m grace.server.serve). Check ZEESH_API_URL if you changed it.")
 
         try:
             data = res.json()

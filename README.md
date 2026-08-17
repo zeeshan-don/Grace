@@ -269,7 +269,7 @@ never hit `/api/provider`).
 ### AI providers & model routing
 
 The backend routes each `/api/provider` request through a **Model Router**
-(`src/agents/modelRouter.ts` + `src/api/providers.ts`):
+(`grace/agents/model_router.py` + `grace/server/providers.py`):
 
 ```
 GRACE CLI
@@ -443,10 +443,10 @@ your request
 LOCAL CLI (works offline; reports usage when logged in)
       │  (M11: grace login/logout/whoami → session token)
       ▼
-GRACE API (src/api + api/)   ← Vercel serverless · keys stay server-side
-      │                            (session auth, scrypt passwords, rate limits)
+GRACE API (grace/server + api/)   ← Vercel serverless (Python) · keys stay server-side
+      │                                 (session auth, scrypt passwords, rate limits)
       ▼
-Neon PostgreSQL (DATABASE_URL)  ·  AI providers (src/providers)
+Neon PostgreSQL (DATABASE_URL)  ·  AI providers (grace/providers)
 
 CLI (src/cli)  →  AgentLoop (src/agent)  →  Tools (src/tools)  →  project / git / safety
                      │
@@ -484,7 +484,8 @@ src/
               reporting.ts (resilient usage reporting)
   cli/        authCommands.ts (login/register/logout/whoami) · input.ts (hidden passwords)
               · freePlan.ts (free-session display helpers)
-api/          Vercel zero-config serverless functions (health, auth/*, usage, provider)
+api/          Vercel zero-config Python functions (health, auth/*, usage, provider)
+              → serve the same handlers as `grace/server` (the Python backend)
 db/           migrations/001_init.sql … 004_free_sessions.sql (Neon schema)
 tests/        unit + agent-loop + coordinator + API + auth + CLI tests (node --test)
 ```
@@ -501,44 +502,45 @@ LOCAL CLI  →  GRACE API  →  Vercel  →  Neon PostgreSQL  →  AI providers
 
 - **Real authentication (M11)** — user accounts (`users`) and sessions
   (`sessions`). Passwords are scrypt-hashed with a per-user salt
-  (`src/api/password.ts`); only `SHA-256(session token)` is stored
-  (`src/api/sessions.ts`). The shared `ZEESH_API_TOKEN` placeholder is gone.
-- **Production hardening (M12)** — every endpoint goes through `withHttp`
-  (`src/api/middleware.ts`): CORS + `OPTIONS` preflight, secret-safe error
+  (`grace/server/password.py`, Node-scrypt-compatible so existing accounts
+  keep working); only `SHA-256(session token)` is stored
+  (`grace/server/sessions.py`). The shared `ZEESH_API_TOKEN` placeholder is gone.
+- **Production hardening (M12)** — every endpoint goes through `with_http`
+  (`grace/server/middleware.py`): CORS + `OPTIONS` preflight, secret-safe error
   responses (unexpected failures return a generic `500` — no stack traces,
   provider errors are sanitized), and one scrub-safe log line per request
-  (`src/api/log.ts` — never passwords/tokens/keys/URLs). Registration can be
-  gated by the closed-beta allowlist (`src/api/beta.ts`).
+  (`grace/server/log.py` — never passwords/tokens/keys/URLs). Registration can
+  be gated by the closed-beta allowlist (`grace/server/beta.py`).
 - **Auth endpoints** — `POST /api/auth/register`, `POST /api/auth/login`,
   `POST /api/auth/logout`, `GET /api/auth/me`. Auth endpoints are rate-limited
-  per IP (`src/api/rateLimit.ts`).
+  per IP (`grace/server/rate_limit.py`).
 - **Protected endpoints** — `/api/usage` and `/api/provider` now require a
   valid session and scope data to the authenticated user (a caller can no
   longer record or read another user's usage).
-- **Server-side provider layer** — `src/api/providers.ts` reuses the existing
-  `AIProvider` abstraction, but provider keys (`NVIDIA_API_KEY`, `GROQ_API_KEY`)
-  live on the server so production keys never reach the CLI or the browser.
-  `createServerRouter` builds the Model Router chain (Groq → NVIDIA NIM →
-  Gemini → MiniMax) per request; failures are classified and reported
-  without secrets.
-- **Neon PostgreSQL** — `src/api/db.ts` connects via `DATABASE_URL` (lazily,
-  so the API still boots without a database). Schema in
-  `db/migrations/001_init.sql` … `005_cost_guard.sql`.
+- **Server-side provider layer** — `grace/server/providers.py` reuses the
+  existing `AIProvider` abstraction, but provider keys (`NVIDIA_API_KEY`,
+  `GROQ_API_KEY`) live on the server so production keys never reach the CLI
+  or the browser. `create_server_router` builds the Model Router chain
+  (Groq → NVIDIA NIM → Gemini → MiniMax) per request; failures are classified
+  and reported without secrets.
+- **Neon PostgreSQL** — `grace/server/db.py` connects via `DATABASE_URL`
+  (lazily, so the API still boots without a database) using psycopg 3. Schema
+  in `db/migrations/001_init.sql` … `005_cost_guard.sql`.
 - **Usage recording** — the CLI reports `user_id`, `model`, `input_tokens`,
   `output_tokens`, `agent_turns`, `timestamp` and `execution_time_ms` after
-  each run when logged in (`src/auth/reporting.ts`). Reporting is
-  fire-and-forget and never breaks the local agent (see `docs/api.md`).
-- **Free plan sessions (M13)** — `src/api/freeSessions.ts` enforces 3 sessions
-  of 60 minutes per user per UTC day on the server (`free_sessions` table,
-  race-safe via a unique constraint). `/api/provider` is gated before any model
-  call; expired sessions auto-roll into the next one and a fully-used day gets
-  `429 daily_limit_exhausted`. See [Free plan — daily sessions](#free-plan--daily-sessions-milestone-13-grace-free).
+  each run when logged in (`grace/auth/reporting.py`). Reporting is
+  fire-and-forget and never breaks the local agent.
+- **Free plan sessions (M13)** — `grace/server/free_sessions.py` enforces 3
+  sessions of 60 minutes per user per UTC day on the server (`free_sessions`
+  table, race-safe via a unique constraint). `/api/provider` is gated before
+  any model call; expired sessions auto-roll into the next one and a
+  fully-used day gets `429 daily_limit_exhausted`. The ₹20/day cost ceiling
+  and global circuit breaker live in `grace/server/cost_guard.py`.
 
-Run it locally:
+Run it locally (Python backend):
 
 ```bash
-npm run serve                  # http://localhost:8787
-npm run smoke                  # scripted health + endpoint smoke test
+python -m grace.server.serve     # http://localhost:8787
 curl http://localhost:8787/api/health
 grace register               # create an account
 grace login                  # log in (usage reporting turns on)

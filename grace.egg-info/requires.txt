@@ -1,5 +1,0 @@
-requests>=2.31
-textual>=0.80
-
-[dev]
-pytest>=8

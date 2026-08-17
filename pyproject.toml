@@ -13,6 +13,11 @@ keywords = ["cli", "ai", "coding-agent", "agent", "developer-tools", "terminal"]
 dependencies = [
     "requests>=2.31",
     "textual>=0.80",
+    # Backend only (grace/server): the CLI never imports psycopg, but the
+    # server and the API need it to reach the Neon/Postgres database. Kept in
+    # the main dependency list so a Vercel deployment installs it from
+    # pyproject.toml without extra configuration.
+    "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]

@@ -2,8 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "",
   "functions": {
-    "api/**/*.ts": {
-      "maxDuration": 60
+    "api/**/*.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{tests/**,docs/**,node_modules/**,dist/**,grace/**/__pycache__/**,**/*.pyc}"
     }
   }
 }

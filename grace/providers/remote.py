@@ -150,9 +150,9 @@ class RemoteProvider:
                 timeout=self.timeout_ms / 1000,
             )
         except requests.exceptions.Timeout:
-            raise RemoteProviderError(0, "The request timed out. Check your connection and ZEESH_API_URL.")
+            raise RemoteProviderError(0, "The request timed out. Check your connection and ZEESH_API_URL (the local backend runs with `python -m grace.server.serve`).")
         except requests.exceptions.RequestException:
-            raise RemoteProviderError(0, f"Could not reach {self.api_url}. Check your connection and ZEESH_API_URL.")
+            raise RemoteProviderError(0, f"Could not reach {self.api_url}. Check your connection and ZEESH_API_URL (the local backend runs with `python -m grace.server.serve`).")
 
         try:
             data = res.json()

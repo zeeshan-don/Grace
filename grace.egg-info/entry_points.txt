@@ -1,2 +1,0 @@
-[console_scripts]
-grace = grace.cli.index:main
