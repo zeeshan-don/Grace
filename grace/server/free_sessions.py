@@ -119,7 +119,7 @@ class FreeSessionService:
         if last is not None:
             if _is_active(last, now):
                 self.db(
-                    "UPDATE free_sessions SET ended_at = $2 WHERE id = $1 AND ended_at IS NULL",
+                    "UPDATE free_sessions SET ended_at = %s WHERE id = %s AND ended_at IS NULL",
                     [last["id"], now.astimezone(timezone.utc).isoformat()],
                 )
             else:
@@ -164,7 +164,7 @@ class FreeSessionService:
             try:
                 inserted = self.db(
                     "INSERT INTO free_sessions (user_id, day, session_number, started_at, expires_at)"
-                    " VALUES ($1, $2, $3, $4, $5)"
+                    " VALUES (%s, %s, %s, %s, %s)"
                     " RETURNING id, user_id, day, session_number, started_at, expires_at, ended_at",
                     [user_id, day, session_number, _iso(started_at), _iso(expires_at)],
                 )
@@ -202,7 +202,7 @@ class FreeSessionService:
         rows = self.db(
             "SELECT id, user_id, day, session_number, started_at, expires_at, ended_at"
             "   FROM free_sessions"
-            "  WHERE user_id = $1 AND day = $2"
+            "  WHERE user_id = %s AND day = %s"
             "  ORDER BY session_number ASC",
             [user_id, day],
         )
@@ -210,7 +210,7 @@ class FreeSessionService:
 
     def _mark_ended(self, row: dict) -> None:
         """Mark a session ended (idempotent) — the DB stays an explicit record."""
-        self.db("UPDATE free_sessions SET ended_at = expires_at WHERE id = $1 AND ended_at IS NULL", [row["id"]])
+        self.db("UPDATE free_sessions SET ended_at = expires_at WHERE id = %s AND ended_at IS NULL", [row["id"]])
 
     def _compute_state(self, rows: list[dict], now: datetime) -> dict:
         limit = self.sessions_per_day

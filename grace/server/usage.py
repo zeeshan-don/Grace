@@ -62,8 +62,8 @@ class UsageService:
             "INSERT INTO agent_runs"
             "   (client_run_id, user_id, session_id, project_type, prompt, status, model,"
             "    agent_turns, tool_calls, input_tokens, output_tokens, execution_time_ms, finished_at)"
-            " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,"
-            "         CASE WHEN $6 = 'running' THEN NULL ELSE now() END)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+            "         CASE WHEN %s = 'running' THEN NULL ELSE now() END)"
             " ON CONFLICT (client_run_id) DO NOTHING"
             " RETURNING id",
             [
@@ -79,6 +79,10 @@ class UsageService:
                 report.get("input_tokens"),
                 report.get("output_tokens"),
                 report.get("execution_time_ms") or None,
+                # The CASE WHEN above re-checks the status value: psycopg has no
+                # node-postgres style placeholder reuse, so the same value is
+                # passed again as its own positional parameter.
+                status,
             ],
         )
 
@@ -87,7 +91,7 @@ class UsageService:
             run_id = _as_int(runs[0].get("id"))
         elif report.get("client_run_id"):
             # Duplicate submission: reuse the existing run (no new usage row).
-            existing = self.db("SELECT id FROM agent_runs WHERE client_run_id = $1", [report["client_run_id"]])
+            existing = self.db("SELECT id FROM agent_runs WHERE client_run_id = %s", [report["client_run_id"]])
             run_id = _as_int(existing[0].get("id")) if existing else None
         if run_id is None or not isinstance(run_id, int) or run_id <= 0:
             raise UsageError(500, "Could not determine the run id.")
@@ -95,7 +99,7 @@ class UsageService:
         if len(runs) == 1:
             self.db(
                 "INSERT INTO usage (user_id, run_id, model, input_tokens, output_tokens)"
-                " VALUES ($1, $2, $3, $4, $5)",
+                " VALUES (%s, %s, %s, %s, %s)",
                 [user_id, run_id, model, report.get("input_tokens"), report.get("output_tokens")],
             )
 
@@ -106,9 +110,9 @@ class UsageService:
         return self.db(
             "SELECT u.id, u.user_id, u.run_id, u.model, u.input_tokens, u.output_tokens, u.created_at"
             "   FROM usage u"
-            "  WHERE u.user_id = $1"
+            "  WHERE u.user_id = %s"
             "  ORDER BY u.created_at DESC, u.id DESC"
-            "  LIMIT $2",
+            "  LIMIT %s",
             [user_id, limit],
         )
 

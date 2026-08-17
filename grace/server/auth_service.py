@@ -47,18 +47,18 @@ class AuthService:
         display_name = input_.get("displayName")
         display_name = display_name.strip() if isinstance(display_name, str) and display_name.strip() else None
 
-        existing = self.db("SELECT id FROM users WHERE email = $1", [email])
+        existing = self.db("SELECT id FROM users WHERE email = %s", [email])
         if existing:
             raise AuthError(409, "An account with this email already exists.")
 
         if opts.get("beta"):
             inserted = self.db(
-                "INSERT INTO users (email, display_name, password_hash, is_beta) VALUES ($1, $2, $3, $4) RETURNING id",
+                "INSERT INTO users (email, display_name, password_hash, is_beta) VALUES (%s, %s, %s, %s) RETURNING id",
                 [email, display_name, hash_password(password), True],
             )
         else:
             inserted = self.db(
-                "INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id",
+                "INSERT INTO users (email, display_name, password_hash) VALUES (%s, %s, %s) RETURNING id",
                 [email, display_name, hash_password(password)],
             )
         user_id = str(inserted[0].get("id") or "") if inserted else ""
@@ -73,7 +73,7 @@ class AuthService:
         password = input_.get("password") or ""
         if not email or not password:
             raise AuthError(400, '"email" and "password" are required.')
-        rows = self.db("SELECT id, email, display_name, password_hash FROM users WHERE email = $1", [email])
+        rows = self.db("SELECT id, email, display_name, password_hash FROM users WHERE email = %s", [email])
         row = rows[0] if rows else None
         if not row:
             raise AuthError(401, "Invalid email or password.")
@@ -94,7 +94,7 @@ class AuthService:
         """Invalidate a session. Returns False when the token was not found."""
         if not token:
             return False
-        self.db("DELETE FROM sessions WHERE token_hash = $1", [hash_session_token(token)])
+        self.db("DELETE FROM sessions WHERE token_hash = %s", [hash_session_token(token)])
         return True
 
     def authenticate(self, token: str) -> dict | None:
@@ -105,7 +105,7 @@ class AuthService:
             "SELECT u.id, u.email, u.display_name, s.expires_at"
             "  FROM sessions s"
             "  JOIN users u ON u.id = s.user_id"
-            " WHERE s.token_hash = $1",
+            " WHERE s.token_hash = %s",
             [hash_session_token(token)],
         )
         row = rows[0] if rows else None
@@ -124,7 +124,7 @@ class AuthService:
         token = generate_session_token()
         expires_at = datetime.fromtimestamp((_now_ms() + SESSION_TTL_MS) / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
         self.db(
-            "INSERT INTO sessions (user_id, token_hash, device, expires_at) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO sessions (user_id, token_hash, device, expires_at) VALUES (%s, %s, %s, %s)",
             [user["id"], hash_session_token(token), device, expires_at],
         )
         return {"user": user, "token": token, "expiresAt": expires_at}

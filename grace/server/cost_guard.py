@@ -212,30 +212,30 @@ class CostGuardService:
 
         self.db(
             "UPDATE daily_cost"
-            "    SET spent_usd_micros = spent_usd_micros + $3,"
-            "        reserved_usd_micros = GREATEST(0, reserved_usd_micros - $4),"
+            "    SET spent_usd_micros = spent_usd_micros + %s,"
+            "        reserved_usd_micros = GREATEST(0, reserved_usd_micros - %s),"
             "        version = version + 1,"
             "        updated_at = now()"
-            "  WHERE user_id = $1 AND day = $2",
+            "  WHERE user_id = %s AND day = %s",
             [reservation["userId"], reservation["day"], actual_micros, reservation["reservedMicros"]],
         )
 
         self.db(
             "UPDATE global_cost"
-            "    SET spent_usd_micros = spent_usd_micros + $3,"
-            "        reserved_usd_micros = GREATEST(0, reserved_usd_micros - $4),"
+            "    SET spent_usd_micros = spent_usd_micros + %s,"
+            "        reserved_usd_micros = GREATEST(0, reserved_usd_micros - %s),"
             "        version = version + 1,"
             "        updated_at = now()"
-            "  WHERE period_type = $1 AND period = $2",
+            "  WHERE period_type = %s AND period = %s",
             ["day", reservation["day"], actual_micros, reservation["reservedMicros"]],
         )
         self.db(
             "UPDATE global_cost"
-            "    SET spent_usd_micros = spent_usd_micros + $3,"
-            "        reserved_usd_micros = GREATEST(0, reserved_usd_micros - $4),"
+            "    SET spent_usd_micros = spent_usd_micros + %s,"
+            "        reserved_usd_micros = GREATEST(0, reserved_usd_micros - %s),"
             "        version = version + 1,"
             "        updated_at = now()"
-            "  WHERE period_type = $1 AND period = $2",
+            "  WHERE period_type = %s AND period = %s",
             ["month", reservation["month"], actual_micros, reservation["reservedMicros"]],
         )
 
@@ -245,7 +245,7 @@ class CostGuardService:
                 "INSERT INTO ai_usage"
                 "   (user_id, session_id, provider, model, input_tokens, cached_input_tokens,"
                 "    output_tokens, total_tokens, estimated_cost_usd_micros, currency, day)"
-                " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'USD', $10)",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'USD', %s)",
                 [
                     reservation["userId"],
                     reservation["sessionId"],
@@ -262,7 +262,7 @@ class CostGuardService:
 
     def read_daily(self, user_id: str, day: str) -> dict:
         """Read-only daily totals for a user (used by tests + the refusal path)."""
-        rows = self.db("SELECT spent_usd_micros, reserved_usd_micros FROM daily_cost WHERE user_id = $1 AND day = $2", [user_id, day])
+        rows = self.db("SELECT spent_usd_micros, reserved_usd_micros FROM daily_cost WHERE user_id = %s AND day = %s", [user_id, day])
         row = rows[0] if rows else None
         return {"spent": int(row.get("spent_usd_micros") or 0) if row else 0, "reserved": int(row.get("reserved_usd_micros") or 0) if row else 0}
 
@@ -278,12 +278,12 @@ class CostGuardService:
             return True
         rows = self.db(
             "INSERT INTO daily_cost (user_id, day, spent_usd_micros, reserved_usd_micros, version)"
-            " VALUES ($1, $2, 0, $3, 1)"
+            " VALUES (%s, %s, 0, %s, 1)"
             " ON CONFLICT (user_id, day) DO UPDATE"
             "   SET reserved_usd_micros = daily_cost.reserved_usd_micros + EXCLUDED.reserved_usd_micros,"
             "       version = daily_cost.version + 1,"
             "       updated_at = now()"
-            "   WHERE daily_cost.spent_usd_micros + daily_cost.reserved_usd_micros + EXCLUDED.reserved_usd_micros <= $4"
+            "   WHERE daily_cost.spent_usd_micros + daily_cost.reserved_usd_micros + EXCLUDED.reserved_usd_micros <= %s"
             " RETURNING user_id",
             [user_id, day, micros, cap_micros],
         )
@@ -295,17 +295,17 @@ class CostGuardService:
             return
         self.db(
             "UPDATE daily_cost"
-            "    SET reserved_usd_micros = GREATEST(0, reserved_usd_micros - $3),"
+            "    SET reserved_usd_micros = GREATEST(0, reserved_usd_micros - %s),"
             "        version = version + 1,"
             "        updated_at = now()"
-            "  WHERE user_id = $1 AND day = $2",
+            "  WHERE user_id = %s AND day = %s",
             [user_id, day, micros],
         )
 
     def _read_global(self, period_type: str, period: str) -> dict:
         """Read-only global totals for a period (used by the circuit breaker)."""
         rows = self.db(
-            "SELECT spent_usd_micros, reserved_usd_micros FROM global_cost WHERE period_type = $1 AND period = $2",
+            "SELECT spent_usd_micros, reserved_usd_micros FROM global_cost WHERE period_type = %s AND period = %s",
             [period_type, period],
         )
         row = rows[0] if rows else None
@@ -316,12 +316,12 @@ class CostGuardService:
             return True
         rows = self.db(
             "INSERT INTO global_cost (period_type, period, spent_usd_micros, reserved_usd_micros, version)"
-            " VALUES ($1, $2, 0, $3, 1)"
+            " VALUES (%s, %s, 0, %s, 1)"
             " ON CONFLICT (period_type, period) DO UPDATE"
             "   SET reserved_usd_micros = global_cost.reserved_usd_micros + EXCLUDED.reserved_usd_micros,"
             "       version = global_cost.version + 1,"
             "       updated_at = now()"
-            "   WHERE global_cost.spent_usd_micros + global_cost.reserved_usd_micros + EXCLUDED.reserved_usd_micros <= $4"
+            "   WHERE global_cost.spent_usd_micros + global_cost.reserved_usd_micros + EXCLUDED.reserved_usd_micros <= %s"
             " RETURNING period_type",
             [period_type, period, micros, cap_micros],
         )
@@ -332,10 +332,10 @@ class CostGuardService:
             return
         self.db(
             "UPDATE global_cost"
-            "    SET reserved_usd_micros = GREATEST(0, reserved_usd_micros - $3),"
+            "    SET reserved_usd_micros = GREATEST(0, reserved_usd_micros - %s),"
             "        version = version + 1,"
             "        updated_at = now()"
-            "  WHERE period_type = $1 AND period = $2",
+            "  WHERE period_type = %s AND period = %s",
             [period_type, period, micros],
         )
 
