@@ -1,3 +1,19 @@
+To download this agent, 
+
+## download and extract this repository
+## Open terminal in project folder
+## Enter the command "pip install ."
+
+After installing, 
+
+## Enter "grace register" and enter ur email and pass
+
+After that,
+
+## Enter "grace" 
+
+You're good to go.. Happy coding...
+
 # GRACE
 
 An AI coding agent that runs inside your local codebase.
@@ -6,27 +22,6 @@ An original, open-source AI coding agent that runs inside your local codebase fr
 the terminal. The concept: **free AI coding assistance funded by developer-focused
 advertising** (not yet implemented — see [Economics & Advertising](#economics--advertising)).
 
-```
-┌─────────────────────────────────────────────────────┐
-│ GRACE   D:\Projects\my-app      · NVIDIA NIM · gpt-oss-20b · Local mode │
-└─────────────────────────────────────────────────────┘
-
-                      ██████╗  ██████╗  █████╗  ██████╗ ███████╗
-                      ██╔════╝ ██╔══██╗██╔══██╗██╔════╝ ██╔════╝
-                      ██║  ███╗██████╔╝███████║██║  ███╗█████╗
-                      ██║   ██║██╔══██╗██╔══██║██║   ██║██╔══╝
-                      ╚██████╔╝██║  ██║██║  ██║╚██████╔╝███████╗
-                       ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝
-                            AI Coding Agent
-
-                      Workspace  D:\Projects\my-app
-                      Model      NVIDIA NIM · openai/gpt-oss-20b
-                      Session    user@example.com · Local mode
-
-╭───────────────────────────────────────────────────────╮
-│ grace> Ask me to fix a bug, add a feature, or type / for commands │
-╰───────────────────────────────────────────────────────╯
-```
 
 Running `grace` on a terminal takes over the screen with a **full-screen
 interactive TUI** (alternate screen buffer — your previous shell output is
