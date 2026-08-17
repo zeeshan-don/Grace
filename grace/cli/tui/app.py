@@ -1,50 +1,48 @@
-"""GRACE TUI app (Textual port of src/cli/tui/app.ts + components.ts).
+"""GRACE TUI app — the full-screen agent workspace (Textual).
 
-A single Textual App composes the layout (home hero OR session feed + input)
-and owns ALL keyboard handling. Keys route by what is currently open
-(permission → picker → login → palette → help → global shortcuts →
-focus-specific editing), so every interactive element is genuinely wired to
-the store.
-
-Layout: the home screen is the full hero (logo → input → shortcuts → status).
-After the first task the app switches to the session layout (slim task header
-→ activity feed → input). No permanent top/bottom bars.
+Renders entirely from the TuiStore (the single source of truth) and follows
+the reference UX: a thin header (GRACE + subtle model/session status), a
+conversation/activity area that scrolls independently, and a FIXED input bar
+at the bottom that never scrolls away. Activity is limited to safe
+user-facing summaries — tool lines settle in place (``Reading x`` →
+``✓ Read x``), the working state is one small ``● Working`` line, and the
+final answer renders as its own block so USER REQUEST → GRACE ACTIVITY →
+FINAL ANSWER stay visually distinct. No raw reasoning, tool JSON, or internal
+diagnostics are ever rendered.
 """
 
-import threading
 import time
 
 from textual.app import App
 from textual.events import Key
 from textual.widgets import Static
 
-from grace.cli.free_plan import format_countdown, format_daily_usage, session_seconds_left
+from grace.cli.free_plan import format_countdown, session_seconds_left
 from grace.cli.tui.commands import HOME_SHORTCUTS, SLASH_COMMANDS
-from grace.cli.tui.logo import choose_logo_for, wordmark
+from grace.cli.tui.logo import choose_logo_for, compact_lines, wordmark
 from grace.cli.ui.theme import supports_unicode, symbols
 from grace.providers.remote import RemoteProvider
 
-SPINNER_MS = 0.12
 TICK_MS = 1.0
 
-# Activity kinds → Rich markup styles (mirrors colorForKind).
-KIND_STYLE = {
-    "user": "bold cyan",
-    "system": "dim grey",
-    "progress": "dim grey",
-    "tool": "cyan",
-    "file": "green",
-    "success": "green",
-    "error": "red",
-    "info": "yellow",
-    "result": "",
-    "console": "dim grey",
-}
+# ---------------------------------------------------------------------------
+# Palette — dark workspace, restrained color (cyan accent, green success,
+# red errors only, gray metadata). The UI is a coding agent, not a dashboard.
+# ---------------------------------------------------------------------------
+ACCENT = "#22d3ee"     # cyan — Grace identity / in-progress activity
+SUCCESS = "#4ade80"    # green — completed activity
+ERROR = "#f87171"      # red — errors only
+DIM = "#71717a"        # zinc-500 — secondary metadata
+FAINT = "#33333a"      # near-black — rules & separators
+TEXT = "#d5d5d8"       # body text
+USER = "#ececf1"       # user prompts (near-white, bold)
+
+SUBTITLE = "A I   C O D I N G   A G E N T"
 
 SHORTCUT_ICONS = {"/help": "▸", "/status": "◇", "/model": "◈", "/provider": "⚙"}
 SHORTCUT_ICONS_ASCII = {"/help": "?", "/status": "=", "/model": "*", "/provider": "#"}
 
-SUBTITLE = "A I   C O D I N G   A G E N T"
+CHROME = 6  # header (2) + input box (3) + footer (1)
 
 
 def _fit(text: str, width: int) -> str:
@@ -55,23 +53,17 @@ def _fit(text: str, width: int) -> str:
     return text[: width - 1] + "…"
 
 
-def _prefix_for(item: dict) -> str:
-    sym = symbols()
-    kind = item["kind"]
-    text = item["text"]
-    if kind == "user":
-        return "› "
-    if kind in ("progress", "info"):
-        return "• "
-    if kind == "tool":
-        return "  "
-    if kind == "file":
-        return "+ "
-    if kind == "success":
-        return "" if text.lstrip().startswith(sym["check"]) else f"{sym['check']} "
-    if kind == "error":
-        return "" if text.lstrip().startswith(sym["cross"]) else f"{sym['cross']} "
-    return ""
+def _esc(text: str) -> str:
+    """Escape Rich markup so literal ``[text]`` is never parsed as a style
+    tag — user input and the ASCII fallback symbols (``[ok]`` / ``[x]``) must
+    render as-is on legacy consoles. Only ``[`` needs escaping: Rich renders
+    ``\\[`` as a literal bracket, and a lone ``]`` is already literal."""
+    return text.replace("[", "\\[")
+
+
+def _prompt_arrow() -> str:
+    """The user-prompt / input arrow degrades to ``>`` on legacy consoles."""
+    return "›" if supports_unicode() else ">"
 
 
 class GraceTuiApp(App):
@@ -81,7 +73,7 @@ class GraceTuiApp(App):
     CSS = """
     GraceTuiApp {
         background: #0b0d10;
-        color: #d6d6d6;
+        color: #d5d5d8;
     }
     """
 
@@ -90,11 +82,11 @@ class GraceTuiApp(App):
         self.store = store
         self.runner = runner
         self.on_exit = on_exit
-        self._frame = 0
         self._header = Static("", id="header")
         self._body = Static("", id="body")
         self._input = Static("", id="input-line")
         self._footer = Static("", id="footer")
+        self._exit_armed_at: float | None = None
 
     # ---------------------------------------------------------------------
     # Lifecycle
@@ -107,7 +99,8 @@ class GraceTuiApp(App):
         self.mount(self._footer)
         self.store.subscribe(self._on_store_change)
         self._render()
-        self.set_interval(SPINNER_MS, self._tick_spinner, pause=False)
+        # Session countdown ticks once per second; only the header is touched
+        # so the rest of the screen never redraws or jumps while the timer runs.
         self.set_interval(TICK_MS, self._tick_clock, pause=False)
 
     def _on_store_change(self) -> None:
@@ -123,18 +116,12 @@ class GraceTuiApp(App):
         except Exception:
             pass
 
-    def _tick_spinner(self) -> None:
-        self._frame += 1
-        if self.store.busy:
-            self._render()
-
     def _tick_clock(self) -> None:
-        # Session countdown ticks once per second; re-render only when a live
-        # session exists (RemoteProvider shared state), or when the header/
-        # status row shows it.
+        # Live session countdown — re-render the header only (the countdown
+        # lives there). The body/input are untouched so nothing flickers.
         state = RemoteProvider.shared_session()
         if state and state.get("sessionExpiresAt"):
-            self._render()
+            self._header.update(self._render_header())
 
     # ---------------------------------------------------------------------
     # Rendering
@@ -147,42 +134,58 @@ class GraceTuiApp(App):
         self._input.update(self._render_input())
         self._footer.update(self._render_footer())
 
+    # ------------------------------------------------------------------
+    # Header — one clean line: GRACE + subtle model/session status.
+    # ------------------------------------------------------------------
+
     def _render_header(self) -> str:
         store = self.store
         info = store.info
-        sym = symbols()
         columns = self.size.width if self.size else 80
-        model = (info.get("model") or info.get("provider") or "") if info.get("providerAvailable") else (info.get("providerError") or "")
+        sym = symbols()
+
+        model = self._model_label(info)
         state = RemoteProvider.shared_session()
         session_num = ""
+        left_seconds = None
         if state and isinstance(state.get("currentSession"), (int, float)):
-            session_num = f"Session {state.get('currentSession')}/{state.get('sessionsUsed', 0) + state.get('sessionsRemaining', 0)} · "
+            total = state.get("sessionsUsed", 0) + (state.get("sessionsRemaining") or 0)
+            session_num = f"Session {state.get('currentSession')}/{total}"
+            left_seconds = session_seconds_left(state.get("sessionExpiresAt"))
 
         right = ""
-        if columns >= 60:
-            right = f"[yellow]{session_num}[/]"
-            left_seconds = session_seconds_left(state.get("sessionExpiresAt")) if state else None
-            if left_seconds is not None:
-                right += f"[yellow]{format_countdown(left_seconds)} left[/]"
-        if model:
-            right += f" [dim grey]{_fit(model, 44)}[/]"
+        if columns >= 78:
+            parts: list[str] = []
+            if session_num:
+                parts.append(session_num + (f" · {format_countdown(left_seconds)} left" if left_seconds is not None else ""))
+            if model:
+                parts.append(model)
+            if info.get("session") and info.get("session") != "Local mode":
+                parts.append(_esc(info["session"]))
+            if parts:
+                # Cap the whole status strip so it never overflows the row.
+                right = "   " + f"[{DIM}]{_fit(' · '.join(parts), max(10, columns - 14))}[/]"
+        elif columns >= 46:
+            if model:
+                right = f"   [{DIM}]{_fit(model, 34)}[/]"
+            elif session_num and left_seconds is not None:
+                right = f"   [{DIM}]{session_num} · {format_countdown(left_seconds)} left[/]"
 
-        lines = [f"[bold cyan]{wordmark()}[/]  {right}"]
-        last_user = self._last_user_item()
-        if last_user:
-            lines.append(f"[bold cyan]›[/] [bold]{_fit(last_user['text'], max(16, columns - 4))}[/]")
-        lines.append(f"[dim grey]{sym['hLine'] * max(12, min(columns - 4, 100))}[/]")
+        lines = [f"[bold {ACCENT}]{wordmark()}[/]{right}"]
+        lines.append(f"[{FAINT}]{sym['hLine'] * max(12, min(columns - 4, 120))}[/]")
         return "\n".join(lines)
 
-    def _last_user_item(self):
-        for item in reversed(self.store.items):
-            if item["kind"] == "user":
-                return item
-        return None
+    def _model_label(self, info: dict) -> str:
+        if info.get("providerAvailable"):
+            return _esc(info.get("model") or info.get("provider") or "")
+        return _esc(info.get("providerError") or "")
+
+    # ------------------------------------------------------------------
+    # Body — overlays first, then home / activity.
+    # ------------------------------------------------------------------
 
     def _render_body(self) -> str:
         store = self.store
-        # Overlays take priority.
         if store.permission:
             return self._render_permission()
         if store.picker:
@@ -200,28 +203,39 @@ class GraceTuiApp(App):
             return self._render_palette() + "\n\n" + self._render_activity()
         return self._render_activity()
 
+    # ------------------------------------------------------------------
+    # Home — a quiet workspace landing: wordmark, tagline, shortcuts.
+    # ------------------------------------------------------------------
+
     def _render_home(self) -> str:
         store = self.store
         columns = self.size.width if self.size else 80
         rows = self.size.height if self.size else 24
+        panel_height = max(4, rows - CHROME)
+
         logo = choose_logo_for(columns, rows)
+        if rows < 18:
+            logo = {"lines": compact_lines(), "width": max(len(l) for l in compact_lines())}
         lines = logo["lines"]
+
         out: list[str] = []
+        content_h = len(lines) + 7
+        pad = max(1, (panel_height - content_h) // 3)
+        out.extend([""] * pad)
         for line in lines:
-            out.append(f"[bold cyan]{line}[/]")
+            out.append(f"[{ACCENT}]{line}[/]")
         out.append("")
-        out.append(f"[dim grey]{SUBTITLE}[/]")
+        out.append(f"[{DIM}]{SUBTITLE}[/]")
         out.append("")
-        # Input is rendered by the input line widget below — the home body
-        # shows shortcuts + status under it.
         if store.palette:
             out.append(self._render_palette())
             return "\n".join(out)
-        if rows >= 16 and columns >= 44:
+        if rows >= 15 and columns >= 44:
             out.append(self._render_shortcuts())
+            out.append("")
+        out.append(f"[{DIM}]Describe a coding task below — I'll work in {_esc(store.info.get('workspace') or 'this directory')}.[/]")
         if rows >= 23:
             out.append("")
-            out.append(f"[dim grey]{symbols()['hLine'] * max(12, min(columns - 8, 56))}[/]")
             out.append(self._render_status())
         return "\n".join(out)
 
@@ -238,86 +252,155 @@ class GraceTuiApp(App):
             icon = f"{icon_table.get(c['name'], '·')} " if with_icons else ""
             desc = f"  {c['description']}" if with_descriptions else ""
             prefix = "› " if active else "  "
-            style = "bold cyan" if active else "dim grey"
+            style = f"bold {ACCENT}" if active else DIM
             parts.append(f"[{style}]{prefix}{icon}{c['name']}{desc}[/]")
         return "   ".join(parts)
 
     def _render_status(self) -> str:
         store = self.store
         info = store.info
-        busy = store.busy
-        sym = symbols()
-        model = (info.get("model") or info.get("provider") or "—") if info.get("providerAvailable") else (info.get("providerError") or "no provider")
-        status = "working" if busy else "ready"
-        status_color = "cyan" if busy else "green"
         state = RemoteProvider.shared_session()
-        has_live = bool(state and session_seconds_left(state.get("sessionExpiresAt")) is not None)
-
-        if has_live:
-            left = session_seconds_left(state["sessionExpiresAt"])
-            quota = f"[dim grey]Quota · Session {state.get('currentSession') or state.get('sessionsUsed')}/{state.get('sessionsUsed', 0) + state.get('sessionsRemaining', 0)} · {format_countdown(left)} left · {format_daily_usage(state.get('dailyUsedSeconds'))} used today[/]"
-        elif info.get("freePlan"):
-            quota = f"[dim grey]{_fit(info['freePlan'], max(16, (self.size.width if self.size else 80) - 4))}[/]"
-        else:
-            quota = ""
-
-        lines = [
-            f"[dim grey]Workspace    {info.get('workspace', '')}[/]",
-            f"[dim grey]Model        {model}[/]",
-            f"[dim grey]Session      {info.get('session', '')}[/]",
-            f"[{status_color}]{sym['dot']} {status}[/]",
-        ]
-        if quota:
-            lines.append(quota)
+        model = self._model_label(info) or "—"
+        workspace = _esc(info.get("workspace") or "")
+        lines = [f"[{DIM}]Workspace    {workspace}[/]", f"[{DIM}]Model        {model}[/]"]
+        if state and isinstance(state.get("currentSession"), (int, float)):
+            left = session_seconds_left(state.get("sessionExpiresAt"))
+            total = state.get("sessionsUsed", 0) + (state.get("sessionsRemaining") or 0)
+            countdown = format_countdown(left) if left is not None else ""
+            lines.append(f"[{DIM}]Session      {state.get('currentSession')}/{total} · {countdown} left[/]")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Activity — the conversation/task area.
+    # ------------------------------------------------------------------
 
     def _render_activity(self) -> str:
         store = self.store
         columns = self.size.width if self.size else 80
         rows = self.size.height if self.size else 24
-        chrome = 7  # header (3) + input (3) + footer (1)
         palette_h = 9 if store.palette else 0
-        panel_height = max(4, rows - chrome - palette_h)
+        panel_height = max(4, rows - CHROME - palette_h)
         inner = max(1, panel_height - 1)
 
-        items = self._without_latest_user(store.items) if True else store.items
+        items = store.items
         total = len(items)
         scroll = min(store.scroll, max(0, total - 1))
         end = max(0, total - scroll)
-        start = max(0, end - inner)
+
+        # The latest user prompt is pinned at the top of the followed view so
+        # USER REQUEST → ACTIVITY → FINAL ANSWER always reads, even when a
+        # long answer overflows the panel on a small terminal.
+        user_idx = None
+        if scroll == 0:
+            for j in range(total - 1, -1, -1):
+                if items[j]["kind"] == "user":
+                    user_idx = j
+                    break
+        budget = inner - (1 if scroll > 0 else 0)
+        start = end
+        while start > 0 and budget > 0:
+            start -= 1
+            budget -= (2 if items[start]["kind"] == "user" else 1)
+        if user_idx is not None:
+            start = min(start, user_idx)
         window = items[start:end]
 
         out: list[str] = []
         if scroll > 0:
-            out.append(f"[yellow]{'▲'} {scroll} line(s) above — End to follow latest[/]")
+            out.append(f"[{DIM}]▲ {scroll} line(s) above — End to follow latest[/]")
         if not window and not store.busy:
-            out.append("[dim grey]No output yet.[/]")
-        for item in window:
-            style = KIND_STYLE.get(item["kind"], "")
-            prefix = _prefix_for(item)
-            if style:
-                out.append(f"[{style}]{prefix}{item['text']}[/]")
-            else:
-                out.append(f"{prefix}{item['text']}")
+            out.append(f"[{DIM}]No output yet — describe a coding task below.[/]")
+
+        i = 0
+        while i < len(window):
+            item = window[i]
+            if item["kind"] == "result":
+                block: list[str] = []
+                while i < len(window) and window[i]["kind"] == "result":
+                    block.append(window[i]["text"])
+                    i += 1
+                out.extend(self._render_answer_block(block, columns))
+                continue
+            out.extend(self._render_item(item, columns))
+            i += 1
+
         if store.busy:
-            frames = symbols()["spinner"]
-            frame = frames[self._frame % len(frames)]
-            out.append(f"[cyan]{frame} Grace is working…[/]")
+            out.append(self._status_line())
+
+        if len(out) > inner:
+            if user_idx is not None:
+                # Keep the pinned prompt (+ its rule); drop the oldest of the rest.
+                out = out[:2] + out[-(inner - 2):]
+            else:
+                out = out[-inner:]
         return "\n".join(out)
 
-    def _without_latest_user(self, items: list[dict]) -> list[dict]:
-        for i in range(len(items) - 1, -1, -1):
-            if items[i]["kind"] == "user":
-                return [item for j, item in enumerate(items) if j != i]
-        return items
+    def _status_line(self) -> str:
+        dot = "●" if supports_unicode() else "*"
+        return f"[{ACCENT}]{dot}[/] [{DIM}]{_esc(self.store.working_status or 'Working')}[/]"
+
+    def _render_item(self, item: dict, columns: int) -> list[str]:
+        """One feed line (plus its separator when it is a user prompt)."""
+        kind = item["kind"]
+        text = _esc(item["text"])
+        sym = symbols()
+        check, cross = _esc(sym["check"]), _esc(sym["cross"])
+        if kind == "user":
+            rule = sym["hLine"] * max(12, min(columns - 8, 56))
+            return [f"[bold {USER}]{_prompt_arrow()} {text}[/]", f"[{FAINT}]{rule}[/]"]
+        if kind == "tool":
+            # In-progress activity — cyan, settles in place into ✓ / ✗.
+            return [f"[{ACCENT}]{text}[/]"]
+        if kind == "success":
+            if text.lstrip().startswith(check):
+                return [f"[{SUCCESS}]{text}[/]"]
+            return [f"[{SUCCESS}]{check}[/] [{TEXT}]{text}[/]"]
+        if kind == "error":
+            if text.lstrip().startswith(cross):
+                return [f"[{ERROR}]{text}[/]"]
+            return [f"[{ERROR}]{cross}[/] [{TEXT}]{text}[/]"]
+        if kind == "file":
+            return [f"[{SUCCESS}]+[/] [{TEXT}]{text}[/]"]
+        if kind in ("info", "progress"):
+            return [f"[{DIM}]· {text}[/]"]
+        if kind == "console":
+            return [f"[{DIM}]{text}[/]"]
+        return [f"[{TEXT}]{text}[/]"]
+
+    def _render_answer_block(self, lines: list[str], columns: int) -> list[str]:
+        """The final answer stands apart: a thin rule, then the block — never
+        styled like another tool log."""
+        sym = symbols()
+        width = max(16, min(columns - 8, 64))
+        out = [f"[{DIM}]{sym['hLine'] * width}[/]"]
+        for idx, line in enumerate(lines):
+            stripped = line.lstrip()
+            if idx == 0 and stripped.startswith(sym["check"]):
+                out.append(f"[{SUCCESS}]{_esc(line)}[/]")
+                out.append("")
+            elif idx == 0 and stripped.startswith(sym["cross"]):
+                out.append(f"[{ERROR}]{_esc(line)}[/]")
+                out.append("")
+            elif stripped.endswith(":") and len(stripped) <= 22:
+                out.append("")
+                out.append(f"[{ACCENT}]{_esc(line)}[/]")
+            elif line.startswith("  ") and " · " in line:
+                out.append(f"[{DIM}]{_esc(line)}[/]")
+            else:
+                out.append(f"[{TEXT}]{_esc(line)}[/]")
+        return out
+
+    # ------------------------------------------------------------------
+    # Input — the FIXED bar at the bottom (never scrolls away).
+    # ------------------------------------------------------------------
 
     def _render_input(self) -> str:
         store = self.store
         columns = self.size.width if self.size else 80
-        total = columns
-        inner = max(8, total - 4)
-        prefix = "› "
-        visible = max(1, inner - len(prefix))
+        sym = symbols()
+        inner = max(8, columns - 6)
+        prefix = _prompt_arrow() + " "
+        visible = max(1, inner - len(prefix) - 2)
 
         text = store.input
         cursor = store.cursor
@@ -333,19 +416,26 @@ class GraceTuiApp(App):
         after = view[cursor_in_view + 1:]
 
         focused = store.focus == "input"
-        border = "cyan" if focused else "grey"
+        border = ACCENT if focused else FAINT
 
-        if text == "" and not store.busy:
-            placeholder = "Grace is working… (Ctrl+C to cancel)" if store.busy else ("What's next?" if store.mode == "session" else "Ask me to build, fix, refactor…")
-            content = f"[dim grey]{_fit(placeholder, max(8, visible))}[/]"
+        if text == "":
+            placeholder = "Grace is working… (Ctrl+C to cancel)" if store.busy else "Enter a coding task or / for commands"
+            shown = _fit(placeholder, max(8, visible))
+            content = f"[{DIM}]{_esc(shown)}[/]"
+            pad = max(0, inner - len(shown))
         else:
-            content = f"{before}[reverse]{at or ' '}[/]{after}"
+            content = f"{_esc(before)}[reverse]{_esc(at or ' ')}[/]{_esc(after)}"
+            # The cursor block is one visible cell even at end-of-text, so pad
+            # against the real rendered length to keep the box borders aligned.
+            pad = max(0, inner - (len(before) + len(at or " ") + len(after)))
 
-        busy_mark = " ⏳" if store.busy else ""
-        return f"┌─ [bold cyan]›[/] {content}{busy_mark}"
+        top = f"[{border}]{sym['cornerTl']}{sym['hLine'] * (columns - 2)}{sym['cornerTr']}[/]"
+        row = f"[{border}]{sym['vLine']}[/] [{ACCENT}]{prefix}[/]{content}{' ' * pad} [{border}]{sym['vLine']}[/]"
+        bottom = f"[{border}]{sym['cornerBl']}{sym['hLine'] * (columns - 2)}{sym['cornerBr']}[/]"
+        return "\n".join([top, row, bottom])
 
     def _render_footer(self) -> str:
-        return "[dim grey]Ctrl+C cancel · Ctrl+L clear · Tab focus · /help commands[/]"
+        return f"[{DIM}]Ctrl+C cancel · Ctrl+L clear · Tab focus · /help commands[/]"
 
     # ---------------------------------------------------------------------
     # Overlays
@@ -354,11 +444,11 @@ class GraceTuiApp(App):
     def _overlay_frame(self, title: str, inner_lines: list[str]) -> str:
         sym = symbols()
         width = 62
-        out = [f"[bold cyan]{sym['cornerTl']}{sym['hLine'] * (width - 2)}{sym['cornerTr']}[/]"]
-        out.append(f"[bold cyan]{sym['vLine']} {title.ljust(width - 3)}{sym['vLine']}[/]")
+        out = [f"[{ACCENT}]{sym['cornerTl']}{sym['hLine'] * (width - 2)}{sym['cornerTr']}[/]"]
+        out.append(f"[{ACCENT}]{sym['vLine']} {title.ljust(width - 3)}{sym['vLine']}[/]")
         for line in inner_lines:
-            out.append(f"[bold cyan]{sym['vLine']}[/] {line}")
-        out.append(f"[bold cyan]{sym['cornerBl']}{sym['hLine'] * (width - 2)}{sym['cornerBr']}[/]")
+            out.append(f"[{ACCENT}]{sym['vLine']}[/] {line}")
+        out.append(f"[{ACCENT}]{sym['cornerBl']}{sym['hLine'] * (width - 2)}{sym['cornerBr']}[/]")
         return "\n".join(out)
 
     def _render_permission(self) -> str:
@@ -368,9 +458,9 @@ class GraceTuiApp(App):
         lines = [
             "[grey]Grace wants to run:[/]",
             "",
-            f"[bold cyan]  {p['command']}[/]",
+            f"[bold {ACCENT}]  {_esc(p['command'])}[/]",
             "",
-            *[f"[yellow]  flagged: {r}[/]" for r in p["reasons"]],
+            *[f"[#facc15]  flagged: {_esc(r)}[/]" for r in p["reasons"]],
             "",
             "[dim]Y Allow · N Deny · A Always allow · Esc Deny[/]",
         ]
@@ -389,10 +479,10 @@ class GraceTuiApp(App):
             marker = "›" if selected else " "
             current = "  (current)" if opt.get("current") else ""
             hint = f"  {opt['hint']}" if opt.get("hint") else ""
-            style = "bold cyan" if selected else "grey"
-            lines.append(f"[{style}]{marker} {opt['label']}{current}[/][dim grey]{hint}[/]")
+            style = f"bold {ACCENT}" if selected else "grey"
+            lines.append(f"[{style}]{marker} {_esc(opt['label'])}{current}[/][dim grey]{_esc(hint)}[/]")
         if not p["options"]:
-            lines.append("[yellow]No matches[/]")
+            lines.append("[#facc15]No matches[/]")
         return self._center(self._overlay_frame(p["title"], lines))
 
     def _render_palette(self) -> str:
@@ -404,20 +494,20 @@ class GraceTuiApp(App):
         for i, c in enumerate(rows):
             selected = i == (store.palette.get("selected") if store.palette else 0)
             marker = "›" if selected else " "
-            style = "bold cyan" if selected else "grey"
+            style = f"bold {ACCENT}" if selected else "grey"
             lines.append(f"[{style}]{marker} {c['name']}[/][dim grey]  {c['description']}[/]")
         if not rows:
-            lines.append("[yellow]No matching commands[/]")
-        out = [f"[bold cyan]{sym['cornerTl']}{sym['hLine'] * (width - 2)}{sym['cornerTr']}[/]"]
+            lines.append("[#facc15]No matching commands[/]")
+        out = [f"[{ACCENT}]{sym['cornerTl']}{sym['hLine'] * (width - 2)}{sym['cornerTr']}[/]"]
         for line in lines:
             out.append(f" {line}")
-        out.append(f"[bold cyan]{sym['cornerBl']}{sym['hLine'] * (width - 2)}{sym['cornerBr']}[/]")
+        out.append(f"[{ACCENT}]{sym['cornerBl']}{sym['hLine'] * (width - 2)}{sym['cornerBr']}[/]")
         return "\n".join(out)
 
     def _render_help(self) -> str:
         lines = []
         for c in SLASH_COMMANDS:
-            lines.append(f"[cyan]{c['name'].ljust(12)}[/][grey]{c['description']}[/]")
+            lines.append(f"[{ACCENT}]{c['name'].ljust(12)}[/][grey]{c['description']}[/]")
         lines.append("")
         lines.append("[dim grey]Esc closes this · every command above works[/]")
         return self._center(self._overlay_frame("Commands", lines))
@@ -434,12 +524,12 @@ class GraceTuiApp(App):
         lines = []
         for key, label, value, masked in fields:
             active = login["field"] == key
-            display = "•" * len(value) if masked else value
+            display = "•" * len(value) if masked else _esc(value)
             cursor_char = "█" if active else " "
-            style = "bold cyan" if active else "grey"
+            style = f"bold {ACCENT}" if active else "grey"
             lines.append(f"[{style}]{label.ljust(10)}[/] [grey] [/]{display}{cursor_char}")
         if login.get("error"):
-            lines.append(f"[red]{login['error']}[/]")
+            lines.append(f"[{ERROR}]{login['error']}[/]")
         lines.append("")
         lines.append("[dim grey]Tab: next field · Enter: submit · Esc: cancel[/]")
         title = "Log in" if login["purpose"] == "login" else "Create account"
@@ -452,14 +542,12 @@ class GraceTuiApp(App):
         return "\n" * pad + block
 
     # ---------------------------------------------------------------------
-    # Key handling (mirrors app.ts useInput routing)
+    # Key handling
     # ---------------------------------------------------------------------
 
     def on_key(self, event: Key) -> None:
         store = self.store
         key = event.key
-        # Textual >= 8.x renamed Key.char to Key.character; accessing the old
-        # name raises AttributeError on every key press and crashes the TUI.
         char = event.character
 
         def handled():
@@ -541,12 +629,19 @@ class GraceTuiApp(App):
             handled()
             return
 
-        # 2. Global shortcuts.
+        # 2. Global shortcuts. Ctrl+C cancels the running task; when idle it
+        # arms an exit that needs a second press within 2s — normal keyboard
+        # input never drops the user out of the TUI.
         if key == "ctrl+c":
             if self.runner.is_busy():
                 self.runner.cancel_task()
             else:
-                self.on_exit()
+                now = time.monotonic()
+                if self._exit_armed_at is not None and now - self._exit_armed_at < 2.0:
+                    self.on_exit()
+                else:
+                    self._exit_armed_at = now
+                    store.push("info", "Press Ctrl+C again to exit Grace.")
             handled()
             return
         if key == "ctrl+d" and not self.runner.is_busy():
@@ -597,7 +692,7 @@ class GraceTuiApp(App):
             handled()
             return
 
-        # 3. Focus-specific.
+        # 3. Focus-specific (activity scroll).
         if store.focus == "activity":
             if key == "up":
                 store.scroll_up(1)

@@ -47,6 +47,10 @@ class TuiStore:
         self.scroll = 0
         self.changed_files: list[str] = []
         self._tool_calls = 0
+        # The live working-state line ("Thinking", "Working", "Running tests"…)
+        # shown as a small unobtrusive status while Grace is busy. Updated in
+        # place by the event adapter — never appended as feed noise.
+        self.working_status = ""
 
         # -- overlays ------------------------------------------------------
         self.permission: dict | None = None
@@ -197,11 +201,55 @@ class TuiStore:
             self.items = self.items[-MAX_ACTIVITY:]
         self.notify()
 
+    def push_pending(self, text: str, kind: str = "tool", meta: dict | None = None) -> int:
+        """Push an in-progress activity line (e.g. a running tool) and return its
+        id so the adapter can update it in place when it settles — the UI shows
+        \"Reading api/provider.py\" → \"✓ Read api/provider.py\" instead of
+        printing duplicate status lines."""
+        item: dict = {"id": _next_id(), "kind": kind, "text": text, "pending": True}
+        if meta:
+            item["meta"] = meta
+        self.items.append(item)
+        if len(self.items) > MAX_ACTIVITY:
+            self.items = self.items[-MAX_ACTIVITY:]
+        self.notify()
+        return item["id"]
+
+    def get_item(self, item_id: int) -> dict | None:
+        for item in self.items:
+            if item["id"] == item_id:
+                return item
+        return None
+
+    def finish_pending(self, item_id: int, ok: bool, text: str | None = None) -> None:
+        """Settle an in-place activity line: success → ✓ (green), failure → ✗ (red)."""
+        for item in self.items:
+            if item["id"] == item_id:
+                item["kind"] = "success" if ok else "error"
+                if text is not None:
+                    item["text"] = text
+                item["pending"] = False
+                self.notify()
+                return
+
+    # ---------------------------------------------------------------------
+    # Working state (live status line, updated in place)
+    # ---------------------------------------------------------------------
+
+    def set_working_status(self, text: str) -> None:
+        if self.working_status != text:
+            self.working_status = text
+            self.notify()
+
+    def clear_working_status(self) -> None:
+        self.set_working_status("")
+
     def clear_activity(self) -> None:
         self.items = []
         self.scroll = 0
         self.changed_files = []
         self._tool_calls = 0
+        self.working_status = ""
         self.mode = "home"
         self.notify()
 
@@ -246,6 +294,8 @@ class TuiStore:
     def set_busy(self, busy: bool) -> None:
         self.busy = busy
         self.task_started_at = time.monotonic() if busy else None
+        if not busy:
+            self.working_status = ""
         self.notify()
 
     def record_tool_call(self) -> None:

@@ -92,3 +92,43 @@ def test_input_editing_history():
     assert store.history == ["h"]
     store.history_up()
     assert store.input == "h"
+
+
+def test_pending_tool_settles_in_place_to_success():
+    store = _store()
+    item_id = store.push_pending("Reading package.json", kind="tool", meta={"tool": "read_file", "args": {"path": "package.json"}})
+    assert store.get_item(item_id)["pending"] is True
+    store.finish_pending(item_id, ok=True, text="Read package.json")
+    item = store.get_item(item_id)
+    assert item["kind"] == "success"
+    assert item["text"] == "Read package.json"
+    assert item["pending"] is False
+    assert len(store.items) == 1  # updated in place, never appended
+
+
+def test_pending_tool_failure_becomes_error():
+    store = _store()
+    item_id = store.push_pending("Reading api/provider.py")
+    store.finish_pending(item_id, ok=False)
+    item = store.get_item(item_id)
+    assert item["kind"] == "error"
+    assert item["text"] == "Reading api/provider.py"
+
+
+def test_working_status_is_a_single_live_line():
+    store = _store()
+    assert store.working_status == ""
+    store.set_working_status("Thinking")
+    assert store.working_status == "Thinking"
+    store.set_working_status("Working")
+    assert store.working_status == "Working"  # replaced, not accumulated
+    store.set_busy(False)
+    assert store.working_status == ""
+
+
+def test_clear_activity_resets_working_status():
+    store = _store()
+    store.set_working_status("Working")
+    store.clear_activity()
+    assert store.working_status == ""
+    assert store.mode == "home"

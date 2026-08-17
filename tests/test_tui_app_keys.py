@@ -106,7 +106,9 @@ def test_arrows_home_end_tab_scroll_ctrl_l_do_not_crash():
     asyncio.run(drive())
 
 
-def test_ctrl_c_quits_cleanly():
+def test_ctrl_c_idle_arms_exit_and_second_press_quits():
+    """Keyboard input must NEVER drop the user out of the TUI: an idle Ctrl+C
+    only shows a hint; a second press within the window exits."""
     async def drive():
         store, runner, app = _make()
         exited = []
@@ -117,7 +119,50 @@ def test_ctrl_c_quits_cleanly():
         app.on_exit = on_exit
         async with app.run_test() as pilot:
             await pilot.press("ctrl+c")
-            assert exited == [True]
+            assert exited == []  # first press: hint only, no exit
+            assert any(i["text"] == "Press Ctrl+C again to exit Grace." for i in store.items)
+
+            await pilot.press("ctrl+c")
+            assert exited == [True]  # second press within 2s: exit
+        return store
+
+    asyncio.run(drive())
+
+
+def test_ctrl_c_while_busy_cancels_task_not_exit():
+    """Ctrl+C while Grace is working cancels the task and stays in the TUI."""
+    async def drive():
+        store, runner, app = _make()
+        cancelled = []
+
+        def cancel_task():
+            cancelled.append(True)
+
+        runner.cancel_task = cancel_task
+        runner.is_busy = lambda: True
+        exited = []
+        app.on_exit = lambda: exited.append(True)
+
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+c")
+            assert cancelled == [True]
+            assert exited == []
+        return store
+
+    asyncio.run(drive())
+
+
+def test_ctrl_c_idle_then_typing_does_not_exit():
+    """A stale arm expires: typing after a cancelled exit press never exits."""
+    async def drive():
+        store, runner, app = _make()
+        exited = []
+        app.on_exit = lambda: exited.append(True)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+c")
+            app._exit_armed_at = None  # simulate the 2s window expiring
+            await pilot.press("ctrl+c")
+            assert exited == []
         return store
 
     asyncio.run(drive())

@@ -22,6 +22,7 @@ from grace.auth.client import ApiClient, ApiError
 from grace.auth.reporting import report_run_usage
 from grace.auth.session import load_session, save_session, session_expired
 from grace.cli.free_plan import session_rollover_note, session_status_line
+from grace.cli.tui.events import TuiEventAdapter
 from grace.cli.tui.info import build_tui_info
 from grace.cli.tui.models import apply_model_selection, apply_provider_selection, discover_models, discover_providers
 from grace.cli.ui.results import render_error, render_task_result
@@ -30,47 +31,6 @@ from grace.config import zeesh_api_url
 from grace.project.index import ProjectIndexService
 from grace.providers.remote import RemoteProvider
 from grace.verbose import is_verbose
-
-
-def friendly_tool(tool: str, args: dict) -> str:
-    """Human-friendly rendering of a tool call (no raw JSON)."""
-    if tool == "read_file":
-        p = str(args.get("path") or "")
-        return f"Reading {p}" if p else "Reading a file"
-    if tool == "write_file":
-        p = str(args.get("path") or "")
-        return f"Writing {p}" if p else "Writing a file"
-    if tool == "edit_file":
-        p = str(args.get("path") or "")
-        return f"Editing {p}" if p else "Editing a file"
-    if tool == "search_files":
-        q = str(args.get("query") or args.get("pattern") or "")
-        return f"Searching files · query: {q}" if q else "Searching files"
-    if tool == "list_directory":
-        p = str(args.get("path") or "")
-        return f"Listing directory {p}" if p and p != "." else "Listing directory"
-    if tool == "run_command":
-        cmd = str(args.get("command") or "")
-        return f"Running {cmd}" if cmd else "Running a command"
-    if tool == "git_diff":
-        return "Checking git diff"
-    if tool == "web_fetch":
-        url = str(args.get("url") or "")
-        return f"Fetching {url}" if url else "Fetching a URL"
-    return tool
-
-
-def _is_tool_status(message: str) -> bool:
-    import re
-
-    return re.match(r"^→ \S+ ", message.strip()) is not None
-
-
-def _is_noise(message: str) -> bool:
-    import re
-
-    m = message.strip()
-    return m in ("Thinking…", "Thinking...") or re.match(r"^Done in \d+ iteration", m) is not None or m.startswith("    ⚙ ")
 
 
 def _command_prefix(command: str) -> str:
@@ -89,6 +49,10 @@ class TuiRunner:
         self._approved_prefixes: set[str] = set()
         self._task_running = False
         self._thread: threading.Thread | None = None
+        # The UI event adapter: the only channel agent events use to reach the
+        # store. Tool lines update in place ("Reading x" → "✓ Read x"), the
+        # working status stays a single live line, and raw diagnostics stay out.
+        self.events = TuiEventAdapter(self.store)
 
     def get_runtime(self):
         return self.runtime
@@ -168,6 +132,7 @@ class TuiRunner:
 
             execution_time_ms = time.monotonic() * 1000 - started_at
             store.push("result", strip_ansi(render_task_result({"result": result, "runtime": runtime, "executionTimeMs": execution_time_ms, "verbose": verbose})))
+            store.clear_working_status()
 
             # GRACE FREE: quota from the server's latest response (real state).
             stored = load_session()
@@ -199,43 +164,9 @@ class TuiRunner:
             store.set_busy(False)
 
     def _handle_coordinator_event(self, e: dict) -> None:
-        store = self.store
-        verbose = is_verbose()
-        etype = e.get("type")
-        if etype == "planning":
-            if verbose:
-                store.push("info", "Planning…")
-        elif etype == "status":
-            if not verbose:
-                return
-            if _is_tool_status(e.get("message") or "") or _is_noise(e.get("message") or ""):
-                return
-            store.push("progress", e["message"])
-        elif etype == "tool-start":
-            if verbose:
-                store.push("tool", friendly_tool(e.get("tool", ""), e.get("args") or {}))
-            store.record_tool_call()
-        elif etype == "tool-end":
-            if verbose and not e.get("ok"):
-                store.push("error", f"{e.get('tool')} failed")
-        elif etype == "file-changed":
-            store.record_changed_file(e.get("path", ""))
-        elif etype == "permission-request":
-            store.push("info", f"Permission needed: {e.get('command')}")
-        elif etype == "permission-result":
-            if e.get("allowed"):
-                store.push("success", f"Allowed: {e.get('command')}")
-            else:
-                store.push("info", f"Denied: {e.get('command')}")
-        elif etype == "agent-done":
-            if e.get("role") != "editor":
-                return
-            if e.get("status") == "completed":
-                store.push("success", e.get("summary") or "Done.")
-            elif e.get("status") == "failed":
-                store.push("error", e.get("error") or e.get("summary") or "")
-            else:
-                store.push("info", e.get("summary") or "")
+        # Single channel from the agent to the UI: the event adapter decides
+        # what is safe to show and how it lands in the store.
+        self.events.handle(e)
 
     def ask_permission(self, command: str, reasons: list[str]) -> bool:
         prefix = _command_prefix(command)
