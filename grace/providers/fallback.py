@@ -13,8 +13,19 @@ All failure detail is kept sanitized (no API keys), and the aggregate error
 names every provider that failed so the operator can see the chain state.
 """
 
-from grace.providers.errors import ProviderError, describe_category, is_fallback_eligible, scrub
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent
+from grace.providers.errors import (
+    ProviderError,
+    describe_category,
+    is_fallback_eligible,
+    scrub,
+)
+from grace.providers.types import (
+    ChatMessage,
+    ChatOptions,
+    ChatResult,
+    ModelInfo,
+    StreamEvent,
+)
 
 
 class FallbackProvider:

@@ -26,8 +26,8 @@ def create_git_diff_tool(ctx) -> Tool:
             d = diff_unified(root, max_lines)
             return truncate_middle(d, 60_000) if d.strip() else "No uncommitted changes."
         if scope == "log":
-            l = recent_log(root, min(max_lines, 20))
-            return l.strip() if l.strip() else "No commits yet."
+            log_text = recent_log(root, min(max_lines, 20))
+            return log_text.strip() if log_text.strip() else "No commits yet."
 
         status = status_short(root).strip()
         recent = recent_log(root, 3)

@@ -6,14 +6,13 @@ provider, project info, persistent session, undo store and tool set.
 
 import os
 
+from grace.agents.model_router import is_known_model, pick_model_for_provider
 from grace.auth.session import clear_session, load_session, session_expired
 from grace.config import groq_api_key, load_app_config, resolve_model
-from grace.agents.model_router import is_known_model, pick_model_for_provider
-from grace.providers.groq import GroqProvider
+from grace.git import is_git_repo
+from grace.project.detect import detect_project
 from grace.providers.registry import create_provider
 from grace.providers.remote import RemoteProvider
-from grace.project.detect import detect_project
-from grace.git import is_git_repo
 from grace.session.session import Session
 from grace.session.undo import UndoStore
 from grace.tools.registry import ToolContext, create_tools
@@ -35,7 +34,7 @@ def ensure_state_dir_ignore(root: str) -> None:
         if os.path.exists(gitignore_path):
             with open(gitignore_path, encoding="utf-8") as f:
                 content = f.read()
-            lines = [l.strip() for l in content.splitlines()]
+            lines = [line.strip() for line in content.splitlines()]
             additions = []
             if entry.strip() not in lines:
                 additions.append(entry)

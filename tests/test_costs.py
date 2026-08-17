@@ -5,7 +5,13 @@ import os
 
 import pytest
 
-from grace.costs.money import MICROS_PER_USD, cost_micros, inr_to_usd_micros, sub_micros, usd_per_1m_to_micros
+from grace.costs.money import (
+    MICROS_PER_USD,
+    cost_micros,
+    inr_to_usd_micros,
+    sub_micros,
+    usd_per_1m_to_micros,
+)
 from grace.costs.pricing import (
     estimate_cost_micros,
     output_micros_per_1m_for,

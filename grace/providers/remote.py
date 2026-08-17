@@ -13,7 +13,17 @@ response and replays it as stream events.
 
 import requests
 
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent, ToolCallParam, Usage, as_chat_messages, as_chat_options
+from grace.providers.types import (
+    ChatMessage,
+    ChatOptions,
+    ChatResult,
+    ModelInfo,
+    StreamEvent,
+    ToolCallParam,
+    Usage,
+    as_chat_messages,
+    as_chat_options,
+)
 
 DEFAULT_TIMEOUT_MS = 60_000
 DEFAULT_CONTEXT = 131_072

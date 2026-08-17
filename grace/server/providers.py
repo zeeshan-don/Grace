@@ -24,10 +24,18 @@ import os
 import time
 
 from grace.agents.model_router import pick_model_for_provider, server_routing_preference
-from grace.providers.errors import ProviderError, describe_provider_error, status_for_category
+from grace.providers.errors import (
+    ProviderError,
+    describe_provider_error,
+    status_for_category,
+)
 from grace.providers.fallback import FallbackProvider
 from grace.providers.registry import create_provider
-from grace.providers.types import ChatMessage, ChatOptions, ToolDefinition, as_chat_messages
+from grace.providers.types import (
+    ChatOptions,
+    ToolDefinition,
+    as_chat_messages,
+)
 
 PROVIDER_ENV = {
     "groq": "GROQ_API_KEY",

@@ -22,10 +22,18 @@ import time
 
 from grace.agent.loop import TaskCancelledError
 from grace.agents.browser import browser_availability
-from grace.agents.capabilities import capabilities_are_read_only, command_policy_for_role, tools_for_capabilities
+from grace.agents.capabilities import (
+    capabilities_are_read_only,
+    command_policy_for_role,
+    tools_for_capabilities,
+)
 from grace.agents.compact import compact_results, compact_text
 from grace.agents.fast_router import classify_task, conversation_reply
-from grace.agents.planner import DEFAULT_PRIMARY_PLAN, llm_planner, normalize_plan, rule_based_planner
+from grace.agents.planner import (
+    DEFAULT_PRIMARY_PLAN,
+    llm_planner,
+    normalize_plan,
+)
 from grace.agents.specs import AGENT_SPECS, ALL_AGENT_ROLES
 from grace.agents.subagent import run_subagent
 from grace.agents.test_runner import run_deterministic_test_runner
@@ -118,7 +126,6 @@ class Coordinator:
         if route == "tests":
             return self.run_tests(task, emit)
 
-        runtime = self.runtime
         index = self.index.get()
         browser = browser_availability()
         unavailable: list[str] = [] if browser["available"] else ["browser-use"]

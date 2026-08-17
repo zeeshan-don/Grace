@@ -6,7 +6,17 @@ import string
 import requests
 
 from grace.providers.errors import ProviderError, scrub
-from grace.providers.types import ChatMessage, ChatOptions, ChatResult, ModelInfo, StreamEvent, ToolCallParam, Usage, as_chat_messages, as_chat_options
+from grace.providers.types import (
+    ChatMessage,
+    ChatOptions,
+    ChatResult,
+    ModelInfo,
+    StreamEvent,
+    ToolCallParam,
+    Usage,
+    as_chat_messages,
+    as_chat_options,
+)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"

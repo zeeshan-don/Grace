@@ -7,7 +7,7 @@ sessions store only the SHA-256 of the token (grace/server/sessions.py).
 """
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from grace.server.db import Db
 from grace.server.password import hash_password, verify_password

@@ -7,7 +7,6 @@ feed while the TUI runs (existing command output becomes scrollable history);
 everything is restored on teardown.
 """
 
-import contextlib
 import io
 import signal
 import sys

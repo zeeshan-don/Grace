@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from grace.auth.client import ApiClient, ApiError
-from grace.auth.session import save_session, clear_session
+from grace.auth.session import clear_session, save_session
 from grace.providers.remote import RemoteProvider
 from grace.providers.types import ChatResult, Usage
 

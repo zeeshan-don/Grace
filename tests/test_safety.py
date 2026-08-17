@@ -109,6 +109,6 @@ def test_resolve_in_project_containment(tmp_path):
 
 
 def test_resolve_in_project_absolutizes():
-    root = str(tmp_path := __import__("tempfile").mkdtemp())
+    root = str(__import__("tempfile").mkdtemp())
     res = resolve_in_project(root, "a/b")
     assert res["abs"] == os.path.normpath(os.path.join(root, "a/b"))

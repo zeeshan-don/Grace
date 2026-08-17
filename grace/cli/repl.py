@@ -13,8 +13,21 @@ from grace.auth.client import ApiClient
 from grace.auth.session import load_session
 from grace.cli.auth_commands import cmd_login, cmd_logout, cmd_register, cmd_whoami
 from grace.cli.banner import render_banner
-from grace.cli.commands import cmd_clear, cmd_diff, cmd_help, cmd_model, cmd_provider, cmd_reset, cmd_status, cmd_undo
-from grace.cli.free_plan import banner_free_plan_line, format_countdown, session_seconds_left
+from grace.cli.commands import (
+    cmd_clear,
+    cmd_diff,
+    cmd_help,
+    cmd_model,
+    cmd_provider,
+    cmd_reset,
+    cmd_status,
+    cmd_undo,
+)
+from grace.cli.free_plan import (
+    banner_free_plan_line,
+    format_countdown,
+    session_seconds_left,
+)
 from grace.cli.task_runner import run_task
 from grace.cli.ui.box import kv
 from grace.cli.ui.theme import theme
@@ -63,7 +76,7 @@ def _ask_permission(command: str, reasons: list[str]) -> bool:
         answer = input(
             f"\n{c.red('! Grace wants to run:')}"
             f"\n\n  {command}"
-            f"\n\n{c.yellow(f'Flagged: {'; '.join(reasons)}')}"
+            f"\n\n{c.yellow('Flagged: ' + '; '.join(reasons))}"
             f"\n\n{c.dim('[y] Yes   [n] No   [a] Always allow similar')}"
             f"\n> "
         )

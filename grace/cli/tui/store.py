@@ -74,8 +74,8 @@ class TuiStore:
 
     def notify(self) -> None:
         self.version_value += 1
-        for l in list(self.listeners):
-            l()
+        for listener in list(self.listeners):
+            listener()
 
     def refresh(self) -> None:
         self.notify()
@@ -456,64 +456,64 @@ class TuiStore:
         self.notify()
 
     def login_type(self, ch: str) -> None:
-        l = self.login
-        if not l or l.get("busy"):
+        login = self.login
+        if not login or login.get("busy"):
             return
-        field = l["field"]
+        field = login["field"]
         if field == "email":
-            l["email"] += ch
+            login["email"] += ch
         elif field == "password":
-            l["password"] += ch
+            login["password"] += ch
         else:
-            l["confirm"] += ch
+            login["confirm"] += ch
         self.notify()
 
     def login_backspace(self) -> None:
-        l = self.login
-        if not l or l.get("busy"):
+        login = self.login
+        if not login or login.get("busy"):
             return
-        field = l["field"]
+        field = login["field"]
         if field == "email":
-            l["email"] = l["email"][:-1]
+            login["email"] = login["email"][:-1]
         elif field == "password":
-            l["password"] = l["password"][:-1]
+            login["password"] = login["password"][:-1]
         else:
-            l["confirm"] = l["confirm"][:-1]
+            login["confirm"] = login["confirm"][:-1]
         self.notify()
 
     def login_next_field(self) -> None:
-        l = self.login
-        if not l or l.get("busy"):
+        login = self.login
+        if not login or login.get("busy"):
             return
-        if l["field"] == "email":
-            l["field"] = "password"
-        elif l["field"] == "password":
-            l["field"] = "confirm" if l["purpose"] == "register" else "email"
+        if login["field"] == "email":
+            login["field"] = "password"
+        elif login["field"] == "password":
+            login["field"] = "confirm" if login["purpose"] == "register" else "email"
         else:
-            l["field"] = "email"
+            login["field"] = "email"
         self.notify()
 
     def login_set_field(self, field: str) -> None:
-        l = self.login
-        if not l:
+        login = self.login
+        if not login:
             return
-        l["field"] = field
+        login["field"] = field
         self.notify()
 
     def login_error(self, error: str) -> None:
-        l = self.login
-        if not l:
+        login = self.login
+        if not login:
             return
-        l["error"] = error
-        l["busy"] = False
+        login["error"] = error
+        login["busy"] = False
         self.notify()
 
     def login_busy(self) -> None:
-        l = self.login
-        if not l:
+        login = self.login
+        if not login:
             return
-        l["busy"] = True
-        l.pop("error", None)
+        login["busy"] = True
+        login.pop("error", None)
         self.notify()
 
     def close_login(self) -> None:

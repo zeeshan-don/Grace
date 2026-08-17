@@ -9,13 +9,24 @@ iteration limit or after repeated unparseable tool calls.
 import json
 import time
 
-from grace.agent.context import DEFAULT_CONTEXT_BUDGET, build_system_prompt, project_bits, task_scope_hint, trim_messages
-from grace.providers.types import ToolCallParam, ToolDefinition
+from grace.agent.context import (
+    DEFAULT_CONTEXT_BUDGET,
+    build_system_prompt,
+    project_bits,
+    task_scope_hint,
+    trim_messages,
+)
 from grace.agent.errors import classify_provider_error, format_run_error, provider_error
 from grace.agent.tool_cache import ToolCache
-from grace.agent.tool_call import ToolCallParseError, parse_tool_call_arguments, sanitize_arguments_for_wire, sanitize_raw_for_log
+from grace.agent.tool_call import (
+    ToolCallParseError,
+    parse_tool_call_arguments,
+    sanitize_arguments_for_wire,
+    sanitize_raw_for_log,
+)
 from grace.git import git_awareness
 from grace.providers.errors import scrub
+from grace.providers.types import ToolCallParam, ToolDefinition
 from grace.safety import is_protected_path, resolve_in_project
 from grace.util_text import truncate_middle
 from grace.verbose import debug_log

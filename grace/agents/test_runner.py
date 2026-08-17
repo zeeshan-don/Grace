@@ -24,13 +24,6 @@ def _one_liner(text: str) -> str:
 
 
 def run_deterministic_test_runner(project_root: str, project) -> SubagentResult:
-    base = SubagentResult(
-        agent="test-runner",
-        label="Test Runner",
-        status="skipped",
-        summary="",
-    )
-
     command = project.testCommand or TEST_COMMANDS_BY_TYPE.get(project.type)
     if not command:
         return SubagentResult(agent="test-runner", label="Test Runner", status="skipped", summary="No test framework detected — nothing to run.")

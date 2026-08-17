@@ -10,9 +10,14 @@ reachable and degrading to the cached session when offline.
 from datetime import datetime, timezone
 
 from grace.auth.client import ApiClient, ApiError
-from grace.auth.session import clear_session, load_session, save_session, session_expired
-from grace.colors import c
+from grace.auth.session import (
+    clear_session,
+    load_session,
+    save_session,
+    session_expired,
+)
 from grace.cli.input import prompt_hidden, prompt_text
+from grace.colors import c
 from grace.config import is_local_backend, zeesh_api_url
 
 

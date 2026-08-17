@@ -24,7 +24,12 @@ from grace.auth.session import load_session, save_session, session_expired
 from grace.cli.free_plan import session_rollover_note, session_status_line
 from grace.cli.tui.events import TuiEventAdapter
 from grace.cli.tui.info import build_tui_info
-from grace.cli.tui.models import apply_model_selection, apply_provider_selection, discover_models, discover_providers
+from grace.cli.tui.models import (
+    apply_model_selection,
+    apply_provider_selection,
+    discover_models,
+    discover_providers,
+)
 from grace.cli.ui.results import render_error, render_task_result
 from grace.cli.ui.theme import strip_ansi
 from grace.config import zeesh_api_url

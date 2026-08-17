@@ -1,9 +1,9 @@
 """read_file tool (port of src/tools/readFile.ts)."""
 
-from grace.project.walker import read_file_safe, rel_from
+from grace.project.walker import read_file_safe
 from grace.safety import is_protected_path, resolve_in_project
-from grace.util_text import truncate_text
 from grace.tools.tool import Tool
+from grace.util_text import truncate_text
 
 MAX_FILE_CHARS = 40_000
 

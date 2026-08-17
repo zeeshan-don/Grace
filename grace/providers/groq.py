@@ -4,9 +4,7 @@ import json
 
 import requests
 
-from grace.util_text import estimate_tokens
 from grace.providers.types import (
-    AIProvider,
     ChatMessage,
     ChatOptions,
     ChatResult,
@@ -17,6 +15,7 @@ from grace.providers.types import (
     as_chat_messages,
     as_chat_options,
 )
+from grace.util_text import estimate_tokens
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 

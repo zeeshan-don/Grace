@@ -8,7 +8,11 @@ from grace.agents.model_router import pick_model_for_provider
 from grace.auth.client import ApiClient
 from grace.auth.session import load_session
 from grace.cli.banner import render_help
-from grace.cli.free_plan import format_countdown, format_daily_usage, session_seconds_left
+from grace.cli.free_plan import (
+    format_countdown,
+    format_daily_usage,
+    session_seconds_left,
+)
 from grace.cli.ui.results import (
     collapse_lines,
     output_count_line,
@@ -17,7 +21,7 @@ from grace.cli.ui.results import (
 )
 from grace.cli.ui.theme import theme
 from grace.colors import c
-from grace.config import groq_api_key, load_app_config, save_app_config, DEFAULT_MODELS
+from grace.config import DEFAULT_MODELS, groq_api_key, load_app_config, save_app_config
 from grace.git import diff_stat, diff_unified, git_summary, status_short
 from grace.providers.registry import create_provider
 from grace.providers.remote import RemoteProvider
@@ -185,7 +189,7 @@ def cmd_diff(runtime) -> None:
             print(c.yellow("Not a git repository and no agent changes recorded yet."))
         else:
             print(c.bold("Files changed by the agent (no git repo detected):"))
-            print("\n".join("  " + l for l in pending))
+            print("\n".join("  " + line for line in pending))
         return
 
     status = status_short(runtime.root)

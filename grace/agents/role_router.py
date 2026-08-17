@@ -5,11 +5,14 @@ resolves its model through the router tables — agents never select providers
 or models themselves.
 """
 
+from grace.agents.model_router import (
+    COORDINATOR_TIER,
+    default_model_router_resolve,
+    pick_model_for_provider,
+)
 from grace.config import groq_api_key
 from grace.providers.groq import GroqProvider
 from grace.providers.remote import RemoteProvider
-from grace.providers.registry import create_provider
-from grace.agents.model_router import COORDINATOR_TIER, default_model_router_resolve, pick_model_for_provider
 
 
 class RoleModelRouter:

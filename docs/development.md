@@ -150,12 +150,15 @@ Key differences:
 
 ## Code quality
 
-There is intentionally no large linting stack. CI runs:
+There is intentionally no large linting stack. Ruff is configured with a
+minimal, safe rule set (`F`, `I`, `E4/E7/E9` — see `pyproject.toml`) and is
+part of the `dev` extras:
 
 ```bash
+ruff check
 python -m pytest
 python -m compileall -q grace api tests
 ```
 
-and verifies the package builds (`python -m build`). Match the style of the
-code you touch and keep the dependency list small.
+CI runs the tests, compile checks and a package build (`python -m build`).
+Match the style of the code you touch and keep the dependency list small.
