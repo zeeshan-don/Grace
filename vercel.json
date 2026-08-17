@@ -4,7 +4,7 @@
   "functions": {
     "api/**/*.py": {
       "maxDuration": 60,
-      "excludeFiles": "{tests/**,docs/**,node_modules/**,dist/**,grace/**/__pycache__/**,**/*.pyc}"
+      "excludeFiles": "{tests/**,docs/**,node_modules/**,dist/**,public/**,grace/**/__pycache__/**,**/*.pyc}"
     }
   }
 }

@@ -51,19 +51,27 @@ file maps to its route (`api/health.py` → `/api/health`,
 from `grace/server/`. There is **no** TypeScript backend in the repository —
 `src/` was removed after the Python migration was verified.
 
-> **GRACE is not a static site.** `vercel.json` declares the `api/**/*.py`
-> serverless functions, contains **no** `framework` preset, and **omits
-> `outputDirectory` entirely**.
+> **GRACE ships a static website (`public/`) alongside the Python API (`api/`).**
+> `vercel.json` declares the `api/**/*.py` serverless functions and contains
+> **no** `framework` preset and **no `outputDirectory`**. With no framework
+> detected, Vercel serves `public/` as the zero-config static output **and**
+> registers each `api/*.py` file as a file-based Python function.
 >
-> **Never set an `outputDirectory` for an API-only project** — `"outputDirectory": ""`
+> **Why the root route 404'd:** the repository previously had API functions but
+> no static content, so `/` had nothing to serve and returned Vercel's
+> platform-level **`NOT_FOUND`** 404 page. Adding the `public/` directory (the
+> zero-config static directory) fixed the root route without touching the API.
+>
+> **Never set an `outputDirectory` in `vercel.json`** — `"outputDirectory": ""`
 > tells Vercel the repo root is static output; the deployment goes into
 > static-file mode, the serverless routes are never registered, and every
 > request returns Vercel's platform-level **`NOT_FOUND`** 404 page.
 >
 > **Vercel dashboard Project Settings take precedence over `vercel.json`.**
-> If the project stores `Output Directory: public` in its settings, clear the
-> **Output Directory** field (Project → Settings → Build & Development
-> Settings → Save) and redeploy. Do **not** create a `public/` folder.
+> Leave the **Output Directory** field empty (Project → Settings → Build &
+> Development Settings → Save) so Vercel keeps its zero-config defaults:
+> static files from `public/` **and** Python functions from `api/`. Do **not**
+> point Output Directory at `public/` alone — that drops the serverless routes.
 
 ## 2. Neon setup
 
@@ -148,6 +156,12 @@ apply per deploy).
 ## 6. Verification commands
 
 ```bash
+# 0. Website (static site in public/) — the root route must not 404
+curl -I https://<your-project>.vercel.app/
+#    → 200 text/html — the GRACE landing page
+curl -I https://<your-project>.vercel.app/assets/site.css
+#    → 200 text/css — static assets resolve
+
 # 1. Health (public)
 curl https://<your-project>.vercel.app/api/health
 #    → {"status":"ok",...,"database":"connected","auth":"configured"}
@@ -183,7 +197,25 @@ curl http://localhost:8787/api/health
 
 `PORT` overrides the dev-server port: `PORT=9999 python -m grace.server.serve`.
 
-## 8. Rollback considerations
+## 9. Website — static site in `public/`
+
+The official GRACE website is a dependency-free static site in `public/`
+(`index.html`, `assets/site.css`, `assets/site.js`, `assets/grace-logo.png`,
+plus favicons). Vercel serves it from the same deployment as the API:
+
+- `/` → `public/index.html` (no framework, no build step, no runtime deps)
+- `/assets/*` → static assets
+- `/api/*` → the Python functions
+
+Run it locally with any static server:
+
+```bash
+python -m http.server 8000 --directory public   # http://localhost:8000
+```
+
+The site has no build step and no dependencies — edit the files in `public/`
+and commit. The `functions` block in `vercel.json` excludes `public/**` so
+static assets never bloat the serverless bundles.
 
 - **Schema**: migrations are additive + idempotent. There is no destructive
   `DROP`/`ALTER … DROP COLUMN`; rolling back a migration means simply not

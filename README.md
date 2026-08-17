@@ -82,8 +82,9 @@ sponsored by Grace Hopper, her estate, or any related organization.
 
 ## Requirements
 
-- Node.js ≥ 23.6 (runs TypeScript directly via native type stripping)
-- A Groq API key — get one at <https://console.groq.com/>
+- Python ≥ 3.10 and `pip`
+- Optional — a Groq API key — get one at <https://console.groq.com/> (only
+  needed for fully local inference; `grace login` uses the hosted backend)
 - Optional (backend only): server-side provider keys for the model router —
   NVIDIA NIM (<https://build.nvidia.com>), Gemini
   (<https://aistudio.google.com/apikey>) and MiniMax
@@ -91,17 +92,29 @@ sponsored by Grace Hopper, her estate, or any related organization.
 
 ## Install & run (quick start)
 
-**Requirement:** Node.js ≥ 23.6 (the CLI runs TypeScript directly via native
-type stripping).
+**Requirement:** Python ≥ 3.10.
 
 ```bash
-npm install
-npm run build
-npm link            # makes `grace` available globally
+pip install .       # installs the `grace` command
+cd path/to/your/project
 grace
 ```
 
-Then configure your AI key (see below) and try your first task:
+Then configure your AI key (see below) or log in, and try your first task:
+
+## Website
+
+The official GRACE website is a static, dependency-free site in [`public/`](public/)
+(`index.html`, `assets/site.css`, `assets/site.js`, `assets/grace-logo.png`). It
+ships with the repository and deploys to Vercel from the same project as the
+Python API — no separate website repo. Run it locally with any static server:
+
+```bash
+python -m http.server 8000 --directory public   # http://localhost:8000
+```
+
+See [`docs/deployment.md`](docs/deployment.md) for how the site and the API
+coexist on Vercel.
 
 ```bash
 grace "Create a small Node app with a /hello endpoint in this project"
