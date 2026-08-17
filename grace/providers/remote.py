@@ -40,6 +40,11 @@ class RemoteProviderError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
         self.status = status
+        # Every message this class carries is client-authored and user-safe
+        # (the real HTTP status or a connection hint — never raw provider/SDK
+        # internals), so the agent loop can surface it verbatim instead of
+        # replacing it with the generic "could not be reached" fallback.
+        self.safe_message = True
 
 
 class RemoteProvider:

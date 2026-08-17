@@ -52,7 +52,11 @@ class FakeProvider:
         turn = self.script[self.call_count] if self.call_count < len(self.script) else {"content": "Done."}
         self.call_count += 1
         if turn.get("error"):
-            raise RuntimeError(turn["error"])
+            # An Exception instance is raised as-is (so attributes like
+            # safe_message survive); a plain string is wrapped like a real
+            # provider SDK error.
+            error = turn["error"]
+            raise error if isinstance(error, Exception) else RuntimeError(error)
         for tc in turn.get("toolCalls", []):
             yield StreamEvent(type="tool_call_delta", index=0, id=tc["id"], name=tc["name"], argumentsDelta=tc["arguments"])
         if turn.get("content"):
@@ -122,6 +126,29 @@ def test_loop_recovers_from_bad_tool_name(tmp_path):
     # The unknown-tool error feeds back to the model, which recovers.
     assert result["finalText"] == "Recovered."
     assert result["error"] is None
+
+
+def test_loop_surfaces_backend_http_status(tmp_path):
+    """A client-authored backend error (real HTTP status) is shown verbatim
+    instead of the generic "could not be reached" fallback — so a down GRACE
+    backend is diagnosable from the CLI."""
+    from grace.providers.remote import RemoteProviderError
+
+    provider = FakeProvider([{"error": RemoteProviderError(500, "The GRACE backend returned status 500.")}])
+    loop = AgentLoop({
+        "provider": provider,
+        "tools": [_read_tool(tmp_path)],
+        "projectRoot": str(tmp_path),
+        "project": FAKE_PROJECT,
+        "session": MemorySession(),
+        "undo": None,
+        "max_iterations": 10,
+    })
+    result = loop.run("ask something")
+    assert result["error"] is not None
+    assert result["error"]["category"] == "provider_unavailable"
+    assert result["error"]["message"] == "The GRACE backend returned status 500."
+    assert "status 500" in result["finalText"]
 
 
 def test_loop_surfaces_provider_failure(tmp_path):

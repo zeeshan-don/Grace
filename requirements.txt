@@ -1,0 +1,13 @@
+# Runtime dependencies for the Vercel Python functions (api/*.py).
+#
+# Vercel installs Python function dependencies from requirements.txt (the
+# mechanism every builder generation supports; pyproject.toml alone is not
+# reliably honored by older Vercel project settings). Without this file a
+# deployed function crashes on cold start — every endpoint returns Vercel's
+# platform-level 500 "FUNCTION_INVOCATION_FAILED" — and the CLI reports
+# "The AI provider could not be reached." when the GRACE backend is selected.
+#
+# The server never imports textual: it is a CLI-only dependency (installed
+# locally via pyproject.toml) and must stay OUT of the server bundle.
+requests>=2.31
+psycopg[binary]>=3.1

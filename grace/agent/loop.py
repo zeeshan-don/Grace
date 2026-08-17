@@ -297,9 +297,16 @@ class AgentLoop:
                 category = classify_provider_error(raw)
                 rate_limited = bool(__import__("re").search(r"rate.?limit|TPM|too large|429|413", raw, __import__("re").I))
                 debug_log(f"[grace:provider] {provider.id} failed ({category}): {scrub(raw)}")
+                message = clean_provider_message(category, rate_limited)
+                if getattr(err, "safe_message", False):
+                    # Already client-authored, user-safe text (e.g. the GRACE
+                    # backend's real HTTP status) — keep it so a down backend
+                    # is diagnosable instead of a generic "could not be
+                    # reached" that blames the user's connection.
+                    message = raw
                 error = {
                     "category": category,
-                    "message": clean_provider_message(category, rate_limited),
+                    "message": message,
                     "providerId": provider.id,
                     "providerLabel": provider.label,
                     "modelId": provider.get_model().id,

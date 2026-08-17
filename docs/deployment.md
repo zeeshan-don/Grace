@@ -28,8 +28,13 @@ talks to this backend only for accounts + usage reporting (`grace login`).
 
 1. Install the CLI: `npm i -g vercel`
 2. From the repo root, run `npx vercel build` first — the log should show
-   **"Detected Python functions in api/"** and install the `pyproject.toml`
-   dependencies (requests, textual, psycopg).
+   **"Detected Python functions in api/"** and install the dependencies.
+   `requirements.txt` (requests, psycopg) is the dependency source Vercel
+   honors across every builder generation; `pyproject.toml` is used by the
+   CLI locally (including textual). If `/api/health` returns Vercel's
+   platform-level `FUNCTION_INVOCATION_FAILED` 500 after a deploy, the
+   functions could not import their dependencies — redeploy with
+   `requirements.txt` present.
 3. `vercel link` (create a new project, e.g. `grace-python-staging` for the
    staging deployment). `vercel.json` sets a 60s max duration for the Python
    functions.
