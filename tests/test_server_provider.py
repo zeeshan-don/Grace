@@ -5,18 +5,28 @@ keys; fallback behavior is tested with stub providers — no real API and no
 keys are used.
 """
 
+import pytest
+
 from grace.agents.model_router import server_routing_preference
 from grace.providers.errors import ProviderError
+from grace.providers.fallback import FallbackProvider
 from grace.providers.types import ChatResult, ModelInfo
 from grace.server import providers as server_providers
 
 MSGS = [{"role": "user", "content": "hello"}]
 
+LABEL_MAP = {
+    "groq": "Groq (LPU)",
+    "nvidia": "NVIDIA NIM",
+    "gemini": "Gemini",
+    "minimax": "MiniMax",
+}
+
 
 class StubProvider:
     def __init__(self, provider_id: str, model: str | None = None, fail_category: str | None = None) -> None:
         self.id = provider_id
-        self.label = "NVIDIA NIM" if provider_id == "nvidia" else "Groq (LPU)"
+        self.label = LABEL_MAP.get(provider_id, provider_id)
         self.model = model or "m"
         self.fail_category = fail_category
         self.calls = 0
@@ -150,3 +160,167 @@ def test_run_server_chat_single_provider_error(monkeypatch):
     assert outcome["ok"] is False
     assert outcome["status"] == 502
     assert "authentication" in outcome["error"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — multi-provider fallback
+# ---------------------------------------------------------------------------
+
+
+def _four_provider_factory(fail_map: dict | None = None):
+    """Return a factory that creates StubProviders for groq/nvidia/gemini/minimax.
+
+    ``fail_map`` maps provider_id → fail_category (e.g. {"groq": "rate_limit"}).
+    Providers not in the map succeed.
+    """
+    fail_map = fail_map or {}
+
+    def factory(provider_id, api_key, model=None):
+        cat = fail_map.get(provider_id)
+        return StubProvider(provider_id, model or "m", fail_category=cat)
+
+    return factory
+
+
+def _set_all_keys(monkeypatch):
+    """Set all four server-side provider keys."""
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("NVIDIA_API_KEY", "n")
+    monkeypatch.setenv("GEMINI_API_KEY", "ge")
+    monkeypatch.setenv("MINIMAX_API_KEY", "mi")
+
+
+# Test 1 — Groq 429 → NVIDIA
+
+def test_groq_429_falls_back_to_nvidia(monkeypatch):
+    """Groq rate-limits → NVIDIA serves the request."""
+    _set_all_keys(monkeypatch)
+    monkeypatch.setattr(server_providers, "create_provider", _four_provider_factory({"groq": "rate_limit"}))
+    outcome = server_providers.run_server_chat({"messages": MSGS, "tier": "coding"})
+    assert outcome["ok"] is True
+    assert outcome["providerId"] == "nvidia"
+    assert outcome["result"].content == "from nvidia"
+
+
+# Test 2 — Groq 429 + NVIDIA failure → Gemini
+
+def test_groq_429_nvidia_fail_falls_back_to_gemini(monkeypatch):
+    """Groq rate-limits, NVIDIA also fails → Gemini serves the request."""
+    _set_all_keys(monkeypatch)
+    monkeypatch.setattr(server_providers, "create_provider", _four_provider_factory({
+        "groq": "rate_limit",
+        "nvidia": "network",
+    }))
+    outcome = server_providers.run_server_chat({"messages": MSGS, "tier": "coding"})
+    assert outcome["ok"] is True
+    assert outcome["providerId"] == "gemini"
+    assert outcome["result"].content == "from gemini"
+
+
+# Test 3 — all providers fail → aggregate error
+
+def test_all_providers_fail_shows_aggregate_error(monkeypatch):
+    """Every provider in the chain fails → the final error names all providers."""
+    _set_all_keys(monkeypatch)
+    monkeypatch.setattr(server_providers, "create_provider", _four_provider_factory({
+        "groq": "rate_limit",
+        "nvidia": "network",
+        "gemini": "server_error",
+        "minimax": "timeout",
+    }))
+    outcome = server_providers.run_server_chat({"messages": MSGS, "tier": "coding"})
+    assert outcome["ok"] is False
+    # The status code reflects the last provider's category (timeout → 504).
+    assert outcome["status"] in (502, 504)
+    assert "All AI providers failed" in outcome["error"]
+    # Each provider name must appear in the aggregate summary.
+    for name in ("Groq", "NVIDIA NIM", "Gemini", "MiniMax"):
+        assert name in outcome["error"], f"{name} missing from aggregate error"
+
+
+# Test 4 — non-fallback error (authentication) → STOP
+
+def test_groq_authentication_stops_fallback(monkeypatch):
+    """Permanent authentication failure must NOT fall back to NVIDIA — it
+    indicates a broken server-side key that no other provider can fix."""
+    _set_all_keys(monkeypatch)
+    monkeypatch.setattr(server_providers, "create_provider", _four_provider_factory({
+        "groq": "authentication",
+    }))
+    outcome = server_providers.run_server_chat({"messages": MSGS, "tier": "coding"})
+    assert outcome["ok"] is False
+    assert "authentication" in outcome["error"].lower()
+    # The aggregate should NOT mention other providers — they were never tried.
+    assert "NVIDIA" not in outcome["error"]
+    assert "Gemini" not in outcome["error"]
+    assert "MiniMax" not in outcome["error"]
+
+
+# Test 5 — only Groq configured → no fake fallback attempt
+
+def test_only_groq_configured_no_fallback(monkeypatch):
+    """When only Groq has a server key, a failure must not pretend to fall back
+    to NVIDIA/Gemini/MiniMax — the single provider is used directly."""
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setattr(server_providers, "create_provider", _four_provider_factory({
+        "groq": "rate_limit",
+    }))
+    outcome = server_providers.run_server_chat({"messages": MSGS, "tier": "coding"})
+    assert outcome["ok"] is False
+    # Only Groq was tried — no fake fallback to other providers.
+    assert "NVIDIA" not in outcome["error"]
+    assert "Gemini" not in outcome["error"]
+    assert "MiniMax" not in outcome["error"]
+
+
+# Test 6 — provider chain ordering
+
+def test_provider_chain_ordering(monkeypatch):
+    """The configured fallback order must be Groq → NVIDIA → Gemini → MiniMax
+    for the relevant hosted routing tier."""
+    _set_all_keys(monkeypatch)
+    from grace.server.providers import create_server_router
+
+    router = create_server_router(None, "coding")
+    assert "error" not in router
+    provider = router["provider"]
+    assert isinstance(provider, FallbackProvider)
+    chain_ids = [p.id for p in provider.chain]
+    assert chain_ids == ["groq", "nvidia", "gemini", "minimax"], (
+        f"Expected groq→nvidia→gemini→minimax, got {chain_ids}"
+    )
+
+
+def test_fallback_logs_warning(caplog):
+    """When fallback occurs, the router must log the failure and the next
+    provider so operators can diagnose chain behaviour in production."""
+    import logging
+
+    groq = StubProvider("groq", fail_category="rate_limit")
+    nvidia = StubProvider("nvidia")
+    router = FallbackProvider([groq, nvidia])
+
+    with caplog.at_level(logging.WARNING, logger="grace.providers.fallback"):
+        result = router.chat(MSGS)
+
+    assert result.content == "from nvidia"
+    assert "groq" in caplog.text.lower()
+    assert "rate_limit" in caplog.text
+    assert "nvidia" in caplog.text.lower()
+
+
+def test_non_retryable_error_logs_and_stops(caplog):
+    """A non-retryable error must log the reason and stop — no fallback."""
+    import logging
+
+    groq = StubProvider("groq", fail_category="authentication")
+    nvidia = StubProvider("nvidia")
+    router = FallbackProvider([groq, nvidia])
+
+    with caplog.at_level(logging.WARNING, logger="grace.providers.fallback"):
+        with pytest.raises(ProviderError) as exc:
+            router.chat(MSGS)
+
+    assert exc.value.category == "authentication"
+    assert nvidia.calls == 0
+    assert "non-retryable" in caplog.text.lower() or "stopping" in caplog.text.lower()

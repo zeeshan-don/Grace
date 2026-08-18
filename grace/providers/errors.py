@@ -73,10 +73,15 @@ def describe_category(category: str) -> str:
 def is_fallback_eligible(category: str) -> bool:
     """Provider-level failures that should activate the fallback router.
 
-    These are the ONLY categories that may switch providers: genuine
-    provider-level problems. Task/model/tool failures never surface as a
-    `ProviderError` from the provider boundary, so they can never trigger
-    fallback.
+    These are the ONLY categories that may switch providers: genuine,
+    transient provider-level problems.  Permanent configuration or
+    authentication failures are *not* fallback-eligible because they
+    indicate a broken server-side key that no other provider can fix —
+    falling back would just burn through the remaining chain for no
+    benefit.
+
+    Task/model/tool failures never surface as a `ProviderError` from
+    the provider boundary, so they can never trigger fallback.
     """
     return category in (
         "rate_limit",
@@ -86,7 +91,6 @@ def is_fallback_eligible(category: str) -> bool:
         "server_error",
         "malformed_response",
         "network",
-        "authentication",
         "unknown",
     )
 
