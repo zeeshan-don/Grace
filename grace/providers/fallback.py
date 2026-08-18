@@ -13,6 +13,8 @@ All failure detail is kept sanitized (no API keys), and the aggregate error
 names every provider that failed so the operator can see the chain state.
 """
 
+import logging
+
 from grace.providers.errors import (
     ProviderError,
     describe_category,
@@ -26,6 +28,8 @@ from grace.providers.types import (
     ModelInfo,
     StreamEvent,
 )
+
+_fallback_log = logging.getLogger("grace.providers.fallback")
 
 
 class FallbackProvider:
@@ -88,9 +92,22 @@ class FallbackProvider:
                     "message": scrub(provider_error.message),
                 })
                 if not is_fallback_eligible(provider_error.category):
+                    _fallback_log.warning(
+                        "Provider %s failed with non-retryable error: %s — stopping.",
+                        provider.id, provider_error.category,
+                    )
                     self.serving_provider = None
                     self.attempt_log = attempts
                     raise provider_error
+                # Log the fallback so operators can diagnose chain behaviour in
+                # production.  The message is scrubbed — no keys or prompts.
+                idx = self.chain.index(provider)
+                _next = self.chain[idx + 1] if idx + 1 < len(self.chain) else None
+                _fallback_log.warning(
+                    "Provider %s failed: %s — falling back to %s.",
+                    provider.id, provider_error.category,
+                    _next.id if _next else "(none)",
+                )
 
         self.serving_provider = None
         self.attempt_log = attempts

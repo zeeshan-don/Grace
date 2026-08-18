@@ -16,9 +16,15 @@ MSGS = [ChatMessage(role="user", content="hi")]
 
 
 class StubProvider:
-    def __init__(self, provider_id: str, chat_impl) -> None:
+    def __init__(self, provider_id: str, chat_impl, label: str | None = None) -> None:
         self.id = provider_id
-        self.label = "NVIDIA NIM" if provider_id == "nvidia" else "Groq (LPU)"
+        self.label = label or (
+            "NVIDIA NIM" if provider_id == "nvidia"
+            else "Groq (LPU)" if provider_id == "groq"
+            else "Gemini" if provider_id == "gemini"
+            else "MiniMax" if provider_id == "minimax"
+            else provider_id
+        )
         self.chat_impl = chat_impl
         self.calls = 0
 
@@ -74,8 +80,9 @@ def test_falls_back_on_rate_limit():
     assert attempts[1]["category"] == "ok"
 
 
-def test_falls_back_for_every_provider_error_category():
-    categories = ["authentication", "rate_limit", "timeout", "unavailable_model", "malformed_response", "network", "unknown"]
+def test_falls_back_for_retryable_provider_error_categories():
+    """All retryable categories must trigger fallback to the next provider."""
+    categories = ["rate_limit", "timeout", "unavailable_model", "server_error", "malformed_response", "network", "unknown"]
 
     def make_failing(category):
         def failing(messages, options=None):
@@ -92,12 +99,31 @@ def test_falls_back_for_every_provider_error_category():
         assert router.last_served is groq
 
 
+def test_authentication_stops_fallback():
+    """Permanent authentication/configuration failures must NOT consume the
+    entire chain — the router should stop at the failing provider."""
+    groq = StubProvider("groq", lambda m, o=None: (_ for _ in ()).throw(
+        ProviderError("groq", "authentication", "bad key", 401)
+    ))
+    nvidia = StubProvider("nvidia", ok_result)
+    router = FallbackProvider([groq, nvidia])
+    with pytest.raises(ProviderError) as exc:
+        router.chat(MSGS)
+    assert exc.value.category == "authentication"
+    assert exc.value.providerId == "groq"
+    assert nvidia.calls == 0, "NVIDIA must NOT be called after an authentication failure"
+    assert router.last_served is None
+    attempts = router.last_attempts
+    assert len(attempts) == 1
+    assert attempts[0]["category"] == "authentication"
+
+
 def test_aggregates_clean_error_when_every_provider_fails():
     def nvidia_fail(messages, options=None):
         raise ProviderError("nvidia", "network", "could not reach nvidia")
 
     def groq_fail(messages, options=None):
-        raise ProviderError("groq", "authentication", "bad groq key")
+        raise ProviderError("groq", "timeout", "groq timed out")
 
     router = FallbackProvider([StubProvider("nvidia", nvidia_fail), StubProvider("groq", groq_fail)])
     with pytest.raises(ProviderError) as exc:
@@ -107,7 +133,7 @@ def test_aggregates_clean_error_when_every_provider_fails():
     assert "All AI providers failed" in message
     assert "NVIDIA NIM" in message
     assert "Groq" in message
-    assert "bad groq key" not in message, "provider detail stays out of the user-facing summary"
+    assert "could not reach nvidia" not in message, "provider detail stays out of the user-facing summary"
 
 
 def test_set_model_delegates_and_get_model_uses_primary():
@@ -144,12 +170,20 @@ def test_describe_category_safe_labels():
     assert describe_category("unknown") == "request failed"
 
 
-def test_every_provider_failure_is_fallback_eligible():
+def test_is_fallback_eligible_retryable_categories():
+    """Retryable/transient errors must be fallback-eligible."""
     for category in [
-        "authentication", "rate_limit", "quota_exhausted", "timeout",
-        "unavailable_model", "server_error", "malformed_response", "network", "unknown",
+        "rate_limit", "quota_exhausted", "timeout",
+        "unavailable_model", "server_error", "malformed_response",
+        "network", "unknown",
     ]:
-        assert is_fallback_eligible(category), f"{category} is a provider-level failure"
+        assert is_fallback_eligible(category), f"{category} should be fallback-eligible"
+
+
+def test_is_fallback_eligible_authentication_not_eligible():
+    """Authentication/configuration failures must NOT be fallback-eligible —
+    they indicate a broken server-side key that no other provider can fix."""
+    assert not is_fallback_eligible("authentication"), "authentication must NOT trigger fallback"
 
 
 def test_server_routing_preference_order():
