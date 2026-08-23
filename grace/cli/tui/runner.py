@@ -11,6 +11,7 @@ ANSI-free lines; the renderer applies colors by kind. Chain-of-thought is
 never rendered.
 """
 
+import queue
 import threading
 import time
 
@@ -54,6 +55,12 @@ class TuiRunner:
         self._approved_prefixes: set[str] = set()
         self._task_running = False
         self._thread: threading.Thread | None = None
+        # Steering: allows the user to send messages to a running agent mid-task.
+        from grace.agent.steering import SteeringQueue
+        self._steering = SteeringQueue()
+        # Ask user: interactive prompts during execution.
+        self._ask_user_queue: queue.Queue[str | None] = queue.Queue()
+        self._ask_user = self._make_ask_user()
         # The UI event adapter: the only channel agent events use to reach the
         # store. Tool lines update in place ("Reading x" → "✓ Read x"), the
         # working status stays a single live line, and raw diagnostics stay out.
@@ -72,6 +79,42 @@ class TuiRunner:
 
     # ---------------------------------------------------------------------
     # Tasks
+    def _make_ask_user(self):
+        """Build the ask_user callback for interactive prompts during execution."""
+        store = self.store
+
+        def ask_user(question: str, options: list[dict], multi_select: bool = False) -> str | None:
+            """Show the question to the user and block until they answer."""
+            # Format the question as a store prompt
+            lines = [question, ""]
+            for i, opt in enumerate(options):
+                label = opt.get("label", "")
+                desc = opt.get("description", "")
+                marker = "○" if not multi_select else "☐"
+                lines.append(f"  {marker} [{i + 1}] {label}")
+                if desc:
+                    lines.append(f"      {desc}")
+            lines.append("")
+            lines.append("Type a number or custom answer:")
+            store.push("info", "\n".join(lines))
+
+            # Block until the user types a response
+            # The TUI input will capture the next user input as the answer
+            answer = self._ask_user_queue.get()
+            if answer is None:
+                return None
+            return answer.strip()
+
+        return ask_user
+
+    def push_steering(self, text: str) -> None:
+        """Push a steering message to the running agent."""
+        self._steering.push(text)
+
+    def has_steering(self) -> bool:
+        """Check if there are pending steering messages."""
+        return self._steering.has_pending
+
     # ---------------------------------------------------------------------
 
     def run_task(self, input_text: str) -> None:
@@ -118,6 +161,8 @@ class TuiRunner:
                 "providerFactory": (lambda role, spec: runtime.provider if role == "editor" else role_router.provider_for(role, spec)),
                 "plannerProvider": role_router.planner_provider(),
                 "signal": self._abort,
+                "steering": self._steering,
+                "askUser": self._ask_user,
             })
 
             try:
