@@ -9,6 +9,7 @@ iteration limit or after repeated unparseable tool calls.
 import json
 import time
 
+from grace.agent.compact import maybe_compact_messages
 from grace.agent.context import (
     DEFAULT_CONTEXT_BUDGET,
     build_system_prompt,
@@ -17,6 +18,7 @@ from grace.agent.context import (
     trim_messages,
 )
 from grace.agent.errors import classify_provider_error, format_run_error, provider_error
+from grace.agent.steering import SteeringQueue
 from grace.agent.tool_cache import ToolCache
 from grace.agent.tool_call import (
     ToolCallParseError,
@@ -61,6 +63,7 @@ class AgentLoop:
         self.ctx = ctx
         self.tools_by_name = {t.name: t for t in ctx["tools"]}
         self.cache = ToolCache()
+        self.steering = ctx.get("steering") or SteeringQueue()
         # Instrumentation accumulated across turns.
         self.metrics = {
             "modelTimeMs": 0,
@@ -111,6 +114,26 @@ class AgentLoop:
         while iterations < max_iterations:
             self.throw_if_aborted()
             iterations += 1
+
+            # --- Context compaction: compress long histories automatically ---
+            compacted, compaction_event = maybe_compact_messages(messages, threshold=budget)
+            if compaction_event:
+                messages = compacted
+                if on_status:
+                    on_status(
+                        f"Context compacted: {compaction_event['messagesDropped']} messages "
+                        f"dropped ({compaction_event['estimatedTokensBefore']} → "
+                        f"{compaction_event['estimatedTokensAfter']} tokens)"
+                    )
+
+            # --- Steering: inject any user messages sent mid-task ---
+            drained = self.steering.drain()
+            for msg in drained:
+                messages.append({"role": "user", "content": msg})
+                session.push_message({"role": "user", "content": msg})
+                if on_status:
+                    on_status(f"Steering: {msg[:60]}{'…' if len(msg) > 60 else ''}")
+
             trimmed = trim_messages(messages, budget)
 
             turn = self.run_turn(trimmed, tool_defs)
@@ -451,6 +474,7 @@ class AgentLoop:
             onTool=on_tool,
             commandPolicy=self.ctx.get("command_policy"),
             undo=self.ctx.get("undo"),
+            askUser=self.ctx.get("askUser"),
         )
 
     # -------------------------------------------------------------------------

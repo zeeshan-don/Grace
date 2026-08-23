@@ -10,14 +10,16 @@ class ToolContext:
 
     Mirrors the TS ToolContext (projectRoot, askPermission, onTool,
     commandPolicy) plus the optional undo store for write/edit tools.
+    Also supports ask_user for interactive prompts during execution.
     """
 
-    def __init__(self, projectRoot: str, askPermission, onTool=None, commandPolicy=None, undo=None) -> None:
+    def __init__(self, projectRoot: str, askPermission, onTool=None, commandPolicy=None, undo=None, askUser=None) -> None:
         self.projectRoot = projectRoot
         self.askPermission = askPermission
         self.onTool = onTool
         self.commandPolicy = commandPolicy
         self.undo = undo
+        self._ask_user = askUser  # callback(question, options, multiSelect) -> str | None
 
     def with_undo(self, undo):
         self.undo = undo

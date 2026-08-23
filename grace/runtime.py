@@ -6,11 +6,12 @@ provider, project info, persistent session, undo store and tool set.
 
 import os
 
-from grace.agents.model_router import is_known_model, pick_model_for_provider
+from grace.agents.model_router import pick_model_for_provider
 from grace.auth.session import clear_session, load_session, session_expired
 from grace.config import groq_api_key, load_app_config, resolve_model
 from grace.git import is_git_repo
 from grace.project.detect import detect_project
+from grace.providers.fallback import FallbackProvider
 from grace.providers.registry import create_provider
 from grace.providers.remote import RemoteProvider
 from grace.session.session import Session
@@ -53,23 +54,47 @@ def ensure_state_dir_ignore(root: str) -> None:
         pass
 
 
+def _local_provider_chain(model: str) -> list:
+    """Build a local fallback provider chain from all configured API keys.
+
+    Preference order: GROQ → NVIDIA → GEMINI → MINIMAX (matches
+    SERVER_ROUTING_PREFERENCE in model_router.py). Only providers with a
+    configured key are included.
+    """
+    PROVIDER_KEYS = [
+        ("groq", "GROQ_API_KEY"),
+        ("nvidia", "NVIDIA_API_KEY"),
+        ("gemini", "GEMINI_API_KEY"),
+        ("minimax", "MINIMAX_API_KEY"),
+    ]
+    chain = []
+    for provider_id, env_name in PROVIDER_KEYS:
+        api_key = (os.environ.get(env_name) or "").strip()
+        if not api_key:
+            continue
+        # Resolve the concrete model for this provider.
+        resolved = pick_model_for_provider(provider_id, "coding", model)
+        try:
+            chain.append(create_provider(provider_id, api_key, resolved))
+        except Exception:
+            continue  # skip broken provider, don't crash
+    return chain
+
+
 def resolve_provider(key: str | None, model: str, session: dict | None) -> dict:
     """Pick the AI provider for a run:
-      1. a local GROQ_API_KEY wins (offline/self-hosted usage),
+      1. a local fallback chain (GROQ → NVIDIA → GEMINI → MINIMAX) wins when
+         any local API key is configured (offline/self-hosted usage),
       2. otherwise a valid login session proxies model calls through the GRACE
          backend (`POST /api/provider`) so production keys stay server-side.
     """
-    if key:
+    # Build the local chain from ALL configured keys (not just GROQ).
+    chain = _local_provider_chain(model)
+    if chain:
         try:
-            # The local Groq path only ever serves Groq models: a documented
-            # NVIDIA-only id (e.g. the NVIDIA-first default) is substituted with
-            # the Groq coding default so a local key never targets an unserved
-            # model. Unknown/custom ids are passed through (the provider validates).
-            if is_known_model("groq", model) or not is_known_model("nvidia", model):
-                local_model = model
-            else:
-                local_model = pick_model_for_provider("groq", "coding")
-            return {"provider": create_provider("groq", key, local_model), "error": None}
+            if len(chain) == 1:
+                return {"provider": chain[0], "error": None}
+            return {"provider": FallbackProvider(chain), "error": None}
         except Exception as err:
             return {"provider": None, "error": str(err)}
     if session and not session_expired(session):

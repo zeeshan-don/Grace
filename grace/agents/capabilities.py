@@ -10,6 +10,9 @@ WRITE_TOOLS = ["write_file", "edit_file"]
 EXECUTE_TOOLS = ["run_command"]
 DIFF_TOOLS = ["git_diff"]
 WEB_TOOLS = ["web_fetch"]
+# Meta/interaction tools: skill discovery, followup suggestions, user interaction.
+# These are Freebuff-style tools that enhance the agent's ability to collaborate.
+META_TOOLS = ["skill", "suggest_followups", "ask_user"]
 # Browser capability has no local tool today — see browser availability.
 
 CAPABILITY_TOOLS = {
@@ -18,6 +21,7 @@ CAPABILITY_TOOLS = {
     "execute": EXECUTE_TOOLS,
     "diff": DIFF_TOOLS,
     "web": WEB_TOOLS,
+    "meta": META_TOOLS,
     "browser": [],
 }
 

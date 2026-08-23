@@ -366,6 +366,7 @@ class Coordinator:
                 askPermission=self.serialized_ask,
                 commandPolicy=command_policy_for_role(role),
                 undo=runtime.undo,
+                askUser=self.deps.get("askUser"),
             )
             tools = tools_for_capabilities(create_tools(ctx), spec.capabilities)
 

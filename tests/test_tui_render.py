@@ -221,7 +221,7 @@ def test_input_bar_placeholder_and_fixed_position():
         store, runner, app = _make()
         async with app.run_test():
             rendered = app._render_input()
-            assert "Enter a coding task or / for commands" in rendered
+            assert "Enter a coding task" in rendered
             # The input is a bordered box, not a bare prompt line.
             assert "┌" in rendered and "└" in rendered
             # Every box row is the same width (borders align).

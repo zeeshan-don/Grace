@@ -12,7 +12,7 @@ deterministic logic — no LLM is spent deciding which LLM should run:
 import re
 
 CONVERSATION_RE = re.compile(
-    r"^(hi\b|hii+|hello|hey|yo|sup|good\s*(morning|afternoon|evening)|thanks|thank\s*you|thx|ty\b|bye|goodbye|see\s*ya|cya|what\s+can\s+you\s+do|what\s+are\s+you\b|who\s+are\s+you\b|are\s+you\s+there)",
+    r"^(hi\b|hii+|hello|hey|yo|sup|good\s*(morning|afternoon|evening)|thanks|thank\s*you|thx|ty\b|bye|goodbye|see\s*ya|cya|what\s+can\s+you\s+do|what\s+are\s+you\b|who\s+are\s+you\b|are\s+you\s+there|what\s+is\s+your\s+name|tell\s+me\s+about\s+yourself|introduce\s+yourself|what\s+do\s+you\s+call\s+yourself)",
     re.I,
 )
 
@@ -63,10 +63,10 @@ def conversation_reply(input_text: str) -> str:
         return "Anytime. What are we working on next?"
     if re.match(r"^(bye|goodbye|see\s*ya|cya)\b", t):
         return "See you around. /exit quits whenever you are ready."
-    if re.search(r"what\s+can\s+you\s+do|what\s+are\s+you\b|who\s+are\s+you\b|are\s+you\s+there", t):
+    if re.search(r"what\s+can\s+you\s+do|what\s+are\s+you\b|who\s+are\s+you\b|are\s+you\s+there|what\s+is\s+your\s+name|tell\s+me\s+about\s+yourself|introduce\s+yourself|what\s+do\s+you\s+call\s+yourself", t):
         return (
-            "I am GRACE, a coding agent that works inside this repository.\n"
-            "Ask me to fix a bug, add a feature, explain code, run tests, or redesign a system — for example:\n"
-            '  "what does src/ do?" · "fix the TypeScript error" · "build authentication"'
+            "I am GRACE, an AI coding agent built by Zeesh Studios.\n"
+            "I work inside this repository to help you fix bugs, add features, explain code, run tests, or redesign systems.\n"
+            'Try: "what does src/ do?" · "fix the TypeScript error" · "build authentication"'
         )
     return "Hey. What are we building?"

@@ -11,8 +11,6 @@ FINAL ANSWER stay visually distinct. No raw reasoning, tool JSON, or internal
 diagnostics are ever rendered.
 """
 
-import time
-
 from textual.app import App
 from textual.events import Key
 from textual.widgets import Static
@@ -86,7 +84,7 @@ class GraceTuiApp(App):
         self._body = Static("", id="body")
         self._input = Static("", id="input-line")
         self._footer = Static("", id="footer")
-        self._exit_armed_at: float | None = None
+
 
     # ---------------------------------------------------------------------
     # Lifecycle
@@ -418,7 +416,7 @@ class GraceTuiApp(App):
         border = ACCENT if focused else FAINT
 
         if text == "":
-            placeholder = "Grace is working… (Ctrl+C to cancel)" if store.busy else "Enter a coding task or / for commands"
+            placeholder = "Grace is working… (Ctrl+C to cancel)" if store.busy else "Enter a coding task or type / for commands"
             shown = _fit(placeholder, max(8, visible))
             content = f"[{DIM}]{_esc(shown)}[/]"
             pad = max(0, inner - len(shown))
@@ -434,7 +432,7 @@ class GraceTuiApp(App):
         return "\n".join([top, row, bottom])
 
     def _render_footer(self) -> str:
-        return f"[{DIM}]Ctrl+C cancel · Ctrl+L clear · Tab focus · /help commands[/]"
+        return f"[{DIM}]Ctrl+C cancel task · Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
 
     # ---------------------------------------------------------------------
     # Overlays
@@ -628,19 +626,11 @@ class GraceTuiApp(App):
             handled()
             return
 
-        # 2. Global shortcuts. Ctrl+C cancels the running task; when idle it
-        # arms an exit that needs a second press within 2s — normal keyboard
-        # input never drops the user out of the TUI.
+        # 2. Global shortcuts. Ctrl+C cancels the running task.
+        # When idle, Ctrl+C is ignored (users can copy output or use /exit to quit).
         if key == "ctrl+c":
             if self.runner.is_busy():
                 self.runner.cancel_task()
-            else:
-                now = time.monotonic()
-                if self._exit_armed_at is not None and now - self._exit_armed_at < 2.0:
-                    self.on_exit()
-                else:
-                    self._exit_armed_at = now
-                    store.push("info", "Press Ctrl+C again to exit Grace.")
             handled()
             return
         if key == "ctrl+d" and not self.runner.is_busy():
@@ -749,9 +739,15 @@ class GraceTuiApp(App):
 
     def _submit(self, text: str) -> None:
         trimmed = text.strip()
-        if not trimmed or self.runner.is_busy():
+        if not trimmed:
             return
         self.store.submit_input()
+        # When the agent is busy, send as a steering message (mid-task input)
+        # instead of queuing a new task.
+        if self.runner.is_busy():
+            self.runner.push_steering(trimmed)
+            self.store.push("info", f"Steering: {trimmed}")
+            return
         if trimmed.startswith("/"):
             self.runner.run_slash(trimmed)
         else:
