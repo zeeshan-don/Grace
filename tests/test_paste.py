@@ -41,10 +41,10 @@ class TestPasteFromClipboard:
 
     @patch("grace.cli.tui.clipboard.platform.system", return_value="Windows")
     @patch("grace.cli.tui.clipboard.subprocess.run")
-    def test_windows_paste_failure(self, mock_run, _platform):
+    def test_windows_paste_failure_returns_none(self, mock_run, _platform):
         mock_run.return_value = MagicMock(returncode=1, stdout=b"")
         result = paste_from_clipboard()
-        assert result == ""
+        assert result is None
 
     @patch("grace.cli.tui.clipboard.platform.system", return_value="Darwin")
     @patch("grace.cli.tui.clipboard.subprocess.run")
@@ -65,15 +65,15 @@ class TestPasteFromClipboard:
         assert "xclip" in cmd
 
     @patch("grace.cli.tui.clipboard.subprocess.run")
-    def test_empty_clipboard(self, mock_run):
+    def test_empty_clipboard_returns_empty_string(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=b"")
         result = paste_from_clipboard()
         assert result == ""
 
     @patch("grace.cli.tui.clipboard.subprocess.run", side_effect=Exception("fail"))
-    def test_exception_returns_empty(self, mock_run):
+    def test_exception_returns_none(self, mock_run):
         result = paste_from_clipboard()
-        assert result == ""
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -570,12 +570,12 @@ class TestKeyboardBehavior:
         """Ctrl+V should paste clipboard contents into the input."""
         async def drive():
             store, runner, app, _ = self._make_app()
-            async with app.run_test() as pilot:
-                # Simulate Ctrl+V — Textual fires Key event
-                await pilot.press("ctrl+v")
-                # Without a real clipboard, _paste_from_clipboard returns
-                # empty and nothing changes — but it must not crash
-                assert store.input == ""
+            with patch("grace.cli.tui.app.paste_from_clipboard", return_value=""):
+                async with app.run_test() as pilot:
+                    # Simulate Ctrl+V — Textual fires Key event
+                    await pilot.press("ctrl+v")
+                    # With mocked empty clipboard, nothing changes
+                    assert store.input == ""
             return store
 
         asyncio.run(drive())
@@ -719,3 +719,351 @@ class TestKeyboardBehavior:
             return store
 
         asyncio.run(drive())
+
+
+# ---------------------------------------------------------------------------
+# /paste slash command
+# ---------------------------------------------------------------------------
+
+class TestSlashPasteCommand:
+    """Verify /paste is recognized and behaves correctly."""
+
+    def _make_runner(self):
+        """Build a minimal runner that tracks run_slash and run_task calls."""
+        slash_calls = []
+        task_calls = []
+
+        class Runner:
+            def is_busy(self):
+                return False
+
+            def run_slash(self, text):
+                slash_calls.append(text)
+                return False
+
+            def run_task(self, text):
+                task_calls.append(text)
+
+            def push_steering(self, text):
+                pass
+
+        return Runner(), slash_calls, task_calls
+
+    def test_slash_paste_recognized(self):
+        """/paste should be dispatched as a slash command, not sent to LLM."""
+        from grace.cli.tui.app import GraceTuiApp
+        from grace.cli.tui.store import TuiStore
+
+        info = {
+            "workspace": ".",
+            "provider": "",
+            "providerAvailable": False,
+            "model": "",
+            "session": "Local mode",
+        }
+        store = TuiStore(info)
+        runner, slash_calls, task_calls = self._make_runner()
+        app = GraceTuiApp(store, runner, lambda: None)
+
+        # Type /paste and submit
+        for ch in "/paste":
+            store.insert(ch)
+        assert store.input == "/paste"
+
+        app._submit(store.input)
+        assert slash_calls == ["/paste"]
+        assert task_calls == []
+
+    def test_slash_paste_with_whitespace(self):
+        """/paste with surrounding whitespace should be recognized."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        with patch("grace.cli.tui.commands_tui.paste_from_clipboard", return_value="x"):
+            result = handle_tui_slash(runner, store, "/paste", "  ")
+
+        assert result is False
+        store.paste_text.assert_called_once_with("x")
+
+    def test_slash_paste_inserts_clipboard(self):
+        """/paste should read clipboard and insert into input."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard",
+            return_value="clipboard content",
+        ):
+            result = handle_tui_slash(runner, store, "/paste", "")
+
+        assert result is False
+        store.paste_text.assert_called_once_with("clipboard content")
+
+    def test_slash_paste_empty_clipboard(self):
+        """/paste with empty clipboard should show info message."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard", return_value=""
+        ):
+            result = handle_tui_slash(runner, store, "/paste", "")
+
+        assert result is False
+        store.push.assert_called_once_with("info", "Clipboard is empty.")
+        store.paste_text.assert_not_called()
+
+    def test_slash_paste_clipboard_failure(self):
+        """/paste should show error when clipboard access fails."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard", return_value=None
+        ):
+            result = handle_tui_slash(runner, store, "/paste", "")
+
+        assert result is False
+        store.push.assert_called_once_with("info", "Unable to read clipboard.")
+        store.paste_text.assert_not_called()
+
+    def test_slash_paste_large_text(self):
+        """/paste should preserve large clipboard text."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        large = "x" * 100_000
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard", return_value=large
+        ):
+            handle_tui_slash(runner, store, "/paste", "")
+
+        store.paste_text.assert_called_once_with(large)
+
+    def test_slash_paste_multiline(self):
+        """/paste should preserve multiline clipboard text."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        multiline = "line1\nline2\nline3"
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard", return_value=multiline
+        ):
+            handle_tui_slash(runner, store, "/paste", "")
+
+        store.paste_text.assert_called_once_with(multiline)
+
+    def test_slash_paste_unicode(self):
+        """/paste should preserve Unicode clipboard text."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        unicode_text = "こんにちは 🌍 café"
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard", return_value=unicode_text
+        ):
+            handle_tui_slash(runner, store, "/paste", "")
+
+        store.paste_text.assert_called_once_with(unicode_text)
+
+    def test_slash_paste_text_with_slash(self):
+        """Clipboard text containing / should not confuse command parsing."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        with patch(
+            "grace.cli.tui.commands_tui.paste_from_clipboard",
+            return_value="use /paste to paste",
+        ):
+            handle_tui_slash(runner, store, "/paste", "")
+
+        store.paste_text.assert_called_once_with("use /paste to paste")
+
+    def test_text_with_slash_not_recognized_as_command(self):
+        """'Please explain /paste behavior' should NOT be a slash command."""
+        from grace.cli.tui.app import GraceTuiApp
+        from grace.cli.tui.store import TuiStore
+
+        info = {
+            "workspace": ".",
+            "provider": "",
+            "providerAvailable": False,
+            "model": "",
+            "session": "Local mode",
+        }
+        store = TuiStore(info)
+        runner, slash_calls, task_calls = self._make_runner()
+        app = GraceTuiApp(store, runner, lambda: None)
+
+        text = "Please explain /paste behavior"
+        for ch in text:
+            store.insert(ch)
+
+        app._submit(store.input)
+        assert slash_calls == []  # Not dispatched as slash command
+        # Text doesn't start with / so it goes to run_task
+        assert task_calls == [text]
+
+    def test_ctrl_v_empty_clipboard_shows_message(self):
+        """Ctrl+V with empty clipboard should show info message."""
+        from grace.cli.tui.app import GraceTuiApp
+
+        store = MagicMock()
+        store.permission = None
+        store.picker = None
+        store.login = None
+        store.help_open = None
+        store.palette = None
+        runner = MagicMock()
+
+        app = GraceTuiApp(store, runner, lambda: None)
+
+        with patch("grace.cli.tui.app.paste_from_clipboard", return_value=""):
+            app._paste_from_clipboard()
+
+        store.push.assert_called_once_with("info", "Clipboard is empty.")
+        store.paste_text.assert_not_called()
+
+    def test_ctrl_v_clipboard_failure_shows_message(self):
+        """Ctrl+V with clipboard failure should show error message."""
+        from grace.cli.tui.app import GraceTuiApp
+
+        store = MagicMock()
+        store.permission = None
+        store.picker = None
+        store.login = None
+        store.help_open = None
+        store.palette = None
+        runner = MagicMock()
+
+        app = GraceTuiApp(store, runner, lambda: None)
+
+        with patch("grace.cli.tui.app.paste_from_clipboard", return_value=None):
+            app._paste_from_clipboard()
+
+        store.push.assert_called_once_with("info", "Unable to read clipboard.")
+        store.paste_text.assert_not_called()
+
+
+class TestHelpRemoved:
+    """Verify /help is no longer registered as a slash command."""
+
+    def test_help_not_in_slash_commands(self):
+        """SLASH_COMMANDS should not contain /help."""
+        from grace.cli.tui.commands import SLASH_COMMANDS
+
+        names = [c["name"] for c in SLASH_COMMANDS]
+        assert "/help" not in names
+
+    def test_help_not_in_home_shortcuts(self):
+        """HOME_SHORTCUTS should not contain /help."""
+        from grace.cli.tui.commands import HOME_SHORTCUTS
+
+        names = [c["name"] for c in HOME_SHORTCUTS]
+        assert "/help" not in names
+
+    def test_paste_in_slash_commands(self):
+        """SLASH_COMMANDS should contain /paste."""
+        from grace.cli.tui.commands import SLASH_COMMANDS
+
+        names = [c["name"] for c in SLASH_COMMANDS]
+        assert "/paste" in names
+
+    def test_paste_in_home_shortcuts(self):
+        """HOME_SHORTCUTS should contain /paste."""
+        from grace.cli.tui.commands import HOME_SHORTCUTS
+
+        names = [c["name"] for c in HOME_SHORTCUTS]
+        assert "/paste" in names
+
+    def test_slash_help_unknown_command(self):
+        """Typing /help should trigger unknown command error."""
+        from grace.cli.tui.commands_tui import handle_tui_slash
+
+        store = MagicMock()
+        runner = MagicMock()
+        runner.get_runtime.return_value = MagicMock()
+
+        result = handle_tui_slash(runner, store, "/help", "")
+
+        assert result is False
+        store.push.assert_called_once()
+        assert "Unknown command" in str(store.push.call_args)
+
+
+class TestPasteHintRendered:
+    """Verify the /paste hint is rendered below the input box."""
+
+    def test_paste_hint_in_input_render(self):
+        """_render_input should include the /paste hint."""
+        from grace.cli.tui.app import GraceTuiApp
+        from grace.cli.tui.store import TuiStore
+
+        info = {
+            "workspace": ".",
+            "provider": "",
+            "providerAvailable": False,
+            "model": "",
+            "session": "Local mode",
+        }
+        store = TuiStore(info)
+        runner = MagicMock()
+        app = GraceTuiApp(store, runner, lambda: None)
+        app._size = MagicMock()
+        app._size.width = 80
+        app._size.height = 24
+
+        rendered = app._render_input()
+        assert "/paste" in rendered
+        assert "Paste clipboard contents" in rendered
+
+    def test_paste_hint_below_box(self):
+        """The hint should appear after the bottom border of the input box."""
+        from grace.cli.tui.app import GraceTuiApp
+        from grace.cli.tui.store import TuiStore
+
+        info = {
+            "workspace": ".",
+            "provider": "",
+            "providerAvailable": False,
+            "model": "",
+            "session": "Local mode",
+        }
+        store = TuiStore(info)
+        runner = MagicMock()
+        app = GraceTuiApp(store, runner, lambda: None)
+        app._size = MagicMock()
+        app._size.width = 80
+        app._size.height = 24
+
+        rendered = app._render_input()
+        lines = rendered.split("\n")
+        # Box has 3 lines (top, content, bottom) + 1 hint line
+        assert len(lines) >= 4
+        hint_line = lines[-1]
+        assert "/paste" in hint_line
+        assert "Paste clipboard contents" in hint_line

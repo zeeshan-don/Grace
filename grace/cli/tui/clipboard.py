@@ -38,8 +38,12 @@ def copy_to_clipboard(text: str) -> bool:
         return False
 
 
-def paste_from_clipboard() -> str:
-    """Read text from the system clipboard. Returns empty string on failure."""
+def paste_from_clipboard() -> str | None:
+    """Read text from the system clipboard.
+
+    Returns the clipboard text on success, empty string ``""`` if the
+    clipboard contains no text, and ``None`` if clipboard access fails.
+    """
     system = platform.system()
     try:
         if system == "Windows":
@@ -50,10 +54,12 @@ def paste_from_clipboard() -> str:
             )
             if proc.returncode == 0:
                 return proc.stdout.decode(errors="replace").strip()
+            return None
         elif system == "Darwin":
             proc = subprocess.run(["pbpaste"], timeout=5, capture_output=True)
             if proc.returncode == 0:
                 return proc.stdout.decode(errors="replace")
+            return None
         else:
             for cmd in ("xclip -selection clipboard -o", "xsel --clipboard --output"):
                 try:
@@ -64,7 +70,8 @@ def paste_from_clipboard() -> str:
                         return proc.stdout.decode(errors="replace")
                 except FileNotFoundError:
                     continue
+            return None
     except Exception:
         pass
-    return ""
+    return None
 

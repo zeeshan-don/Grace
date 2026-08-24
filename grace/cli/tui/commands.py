@@ -6,14 +6,14 @@ No dummy suggestions.
 """
 
 HOME_SHORTCUTS = [
-    {"name": "/help", "description": "Show commands"},
+    {"name": "/paste", "description": "Paste clipboard"},
     {"name": "/status", "description": "Workspace & session"},
     {"name": "/model", "description": "Switch model"},
     {"name": "/provider", "description": "Switch provider"},
 ]
 
 SLASH_COMMANDS = [
-    {"name": "/help", "usage": "/help", "description": "Show commands"},
+    {"name": "/paste", "usage": "/paste", "description": "Paste clipboard contents into the input"},
     {"name": "/status", "usage": "/status", "description": "Workspace, provider and session status"},
     {"name": "/model", "usage": "/model [id]", "description": "Show model or open the picker"},
     {"name": "/provider", "usage": "/provider [name]", "description": "Show provider or open the picker"},

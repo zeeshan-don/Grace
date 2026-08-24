@@ -71,7 +71,7 @@ def test_home_screen_renders_wordmark_and_hint():
             # compact "G   R   A   C   E" on small terminals.
             assert "GRACE" in body or "G   R   A   C   E" in body or "█" in body
             assert "Describe a coding task below" in body
-            assert "/help" in body
+            assert "/paste" in body
         return store
 
     asyncio.run(drive())

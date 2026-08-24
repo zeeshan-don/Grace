@@ -17,6 +17,7 @@ from grace.cli.commands import (
     cmd_status,
     cmd_undo,
 )
+from grace.cli.tui.clipboard import paste_from_clipboard
 from grace.verbose import is_verbose, set_verbose, toggle_verbose
 
 
@@ -24,8 +25,14 @@ def handle_tui_slash(runner, store, cmd: str, arg: str) -> bool:
     """Execute a slash command. Returns True when Grace should exit."""
     runtime = runner.get_runtime()
 
-    if cmd == "/help":
-        store.open_help()
+    if cmd == "/paste":
+        text = paste_from_clipboard()
+        if text is None:
+            store.push("info", "Unable to read clipboard.")
+        elif text == "":
+            store.push("info", "Clipboard is empty.")
+        else:
+            store.paste_text(text)
         return False
 
     if cmd == "/model":
@@ -116,5 +123,5 @@ def handle_tui_slash(runner, store, cmd: str, arg: str) -> bool:
     if cmd in ("/exit", "/quit"):
         return True
 
-    store.push("error", f'Unknown command "{cmd}". Type /help for the list.')
+    store.push("error", f'Unknown command "{cmd}". Type / for the command list.')
     return False

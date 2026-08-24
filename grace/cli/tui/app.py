@@ -38,8 +38,8 @@ USER = "#ececf1"       # user prompts (near-white, bold)
 
 SUBTITLE = "A I   C O D I N G   A G E N T"
 
-SHORTCUT_ICONS = {"/help": "▸", "/status": "◇", "/model": "◈", "/provider": "⚙"}
-SHORTCUT_ICONS_ASCII = {"/help": "?", "/status": "=", "/model": "*", "/provider": "#"}
+SHORTCUT_ICONS = {"/paste": "▸", "/status": "◇", "/model": "◈", "/provider": "⚙"}
+SHORTCUT_ICONS_ASCII = {"/paste": "?", "/status": "=", "/model": "*", "/provider": "#"}
 
 CHROME = 6  # header (2) + input box (3) + footer (1)
 
@@ -430,10 +430,13 @@ class GraceTuiApp(App):
         top = f"[{border}]{sym['cornerTl']}{sym['hLine'] * (columns - 2)}{sym['cornerTr']}[/]"
         row = f"[{border}]{sym['vLine']}[/] [{ACCENT}]{prefix}[/]{content}{' ' * pad} [{border}]{sym['vLine']}[/]"
         bottom = f"[{border}]{sym['cornerBl']}{sym['hLine'] * (columns - 2)}{sym['cornerBr']}[/]"
-        return "\n".join([top, row, bottom])
+        hint_raw = "  /paste  Paste clipboard contents"
+        hint_pad = max(0, columns - len(hint_raw))
+        hint = f"  [bold {ACCENT}]/paste[/]  [dim]Paste clipboard contents[/]{' ' * hint_pad}"
+        return "\n".join([top, row, bottom, hint])
 
     def _render_footer(self) -> str:
-        return f"[{DIM}]Ctrl+C copy · Ctrl+V paste · Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
+        return f"[{DIM}]Ctrl+C copy · Ctrl+V paste · Ctrl+L clear · Tab focus · /exit to quit · / commands[/]"
 
     # ---------------------------------------------------------------------
     # Overlays
@@ -785,7 +788,11 @@ class GraceTuiApp(App):
         if store.palette:
             return
         text = paste_from_clipboard()
-        if not text:
+        if text is None:
+            store.push("info", "Unable to read clipboard.")
+            return
+        if text == "":
+            store.push("info", "Clipboard is empty.")
             return
         store.paste_text(text)
 
