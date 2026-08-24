@@ -433,7 +433,7 @@ class GraceTuiApp(App):
         return "\n".join([top, row, bottom])
 
     def _render_footer(self) -> str:
-        return f"[{DIM}]Ctrl+C copy last answer · Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
+        return f"[{DIM}]Ctrl+C copy · Ctrl+V paste · Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
 
     # ---------------------------------------------------------------------
     # Overlays
@@ -748,7 +748,13 @@ class GraceTuiApp(App):
     # ---------------------------------------------------------------------
 
     def on_paste(self, event) -> None:
-        """Handle terminal paste (Ctrl+V / right-click paste)."""
+        """Handle terminal paste (Ctrl+V / right-click paste).
+
+        Most terminals intercept Ctrl+V and send the clipboard contents as a
+        bracketed paste sequence. Textual converts that into a ``Paste`` event
+        which arrives here. We insert the full text in one batch so that large
+        pastes trigger a single re-render.
+        """
         store = self.store
         text = getattr(event, "text", "") or ""
         if not text:
@@ -759,15 +765,19 @@ class GraceTuiApp(App):
         # Ignore paste while palette is open.
         if store.palette:
             return
-        for ch in text:
-            store.insert(ch)
+        store.paste_text(text)
 
     # ---------------------------------------------------------------------
     # Copy handling
     # ---------------------------------------------------------------------
 
     def _paste_from_clipboard(self) -> None:
-        """Paste text from the system clipboard into the input box."""
+        """Paste text from the system clipboard into the input box.
+
+        This is a fallback for terminals that pass Ctrl+V through as a key
+        event instead of using bracketed paste. The system clipboard is read
+        via ``paste_from_clipboard`` (platform-specific subprocess).
+        """
         store = self.store
         # Ignore paste while overlays are active.
         if store.permission or store.picker or store.login or store.help_open:
@@ -777,8 +787,7 @@ class GraceTuiApp(App):
         text = paste_from_clipboard()
         if not text:
             return
-        for ch in text:
-            store.insert(ch)
+        store.paste_text(text)
 
     def _copy_last_answer(self) -> None:
         """Copy the last answer/result from the activity feed to clipboard."""
