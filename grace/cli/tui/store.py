@@ -92,6 +92,19 @@ class TuiStore:
         self.sync_palette()
         self.notify()
 
+    def paste_text(self, text: str) -> None:
+        """Insert *text* at the cursor position with a single notification.
+
+        Used by clipboard paste handlers so that large pastes trigger one
+        re-render instead of one per character.
+        """
+        if not text:
+            return
+        self.input = self.input[:self.cursor] + text + self.input[self.cursor:]
+        self.cursor += len(text)
+        self.sync_palette()
+        self.notify()
+
     def backspace(self) -> None:
         if self.cursor == 0:
             return
