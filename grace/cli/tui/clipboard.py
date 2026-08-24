@@ -1,4 +1,4 @@
-"""Cross-platform clipboard copy (no external dependencies)."""
+"""Cross-platform clipboard copy/paste (no external dependencies)."""
 
 import platform
 import subprocess
@@ -36,3 +36,35 @@ def copy_to_clipboard(text: str) -> bool:
             return False
     except Exception:
         return False
+
+
+def paste_from_clipboard() -> str:
+    """Read text from the system clipboard. Returns empty string on failure."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                timeout=5,
+                capture_output=True,
+            )
+            if proc.returncode == 0:
+                return proc.stdout.decode(errors="replace").strip()
+        elif system == "Darwin":
+            proc = subprocess.run(["pbpaste"], timeout=5, capture_output=True)
+            if proc.returncode == 0:
+                return proc.stdout.decode(errors="replace")
+        else:
+            for cmd in ("xclip -selection clipboard -o", "xsel --clipboard --output"):
+                try:
+                    proc = subprocess.run(
+                        cmd.split(), timeout=5, capture_output=True
+                    )
+                    if proc.returncode == 0:
+                        return proc.stdout.decode(errors="replace")
+                except FileNotFoundError:
+                    continue
+    except Exception:
+        pass
+    return ""
+
