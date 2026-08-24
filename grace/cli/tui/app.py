@@ -416,7 +416,7 @@ class GraceTuiApp(App):
         border = ACCENT if focused else FAINT
 
         if text == "":
-            placeholder = "Grace is working… (Ctrl+C to cancel)" if store.busy else "Enter a coding task or type / for commands"
+            placeholder = "Grace is working… (Esc to cancel)" if store.busy else "Enter a coding task or type / for commands"
             shown = _fit(placeholder, max(8, visible))
             content = f"[{DIM}]{_esc(shown)}[/]"
             pad = max(0, inner - len(shown))
@@ -432,7 +432,7 @@ class GraceTuiApp(App):
         return "\n".join([top, row, bottom])
 
     def _render_footer(self) -> str:
-        return f"[{DIM}]Ctrl+C cancel task · Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
+        return f"[{DIM}]Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
 
     # ---------------------------------------------------------------------
     # Overlays
@@ -626,11 +626,9 @@ class GraceTuiApp(App):
             handled()
             return
 
-        # 2. Global shortcuts. Ctrl+C cancels the running task.
-        # When idle, Ctrl+C is ignored (users can copy output or use /exit to quit).
-        if key == "ctrl+c":
-            if self.runner.is_busy():
-                self.runner.cancel_task()
+
+        if key == "ctrl+c" and self.runner.is_busy():
+            self.runner.cancel_task()
             handled()
             return
         if key == "ctrl+d" and not self.runner.is_busy():
