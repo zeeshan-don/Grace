@@ -16,6 +16,7 @@ from textual.events import Key
 from textual.widgets import Static
 
 from grace.cli.free_plan import format_countdown, session_seconds_left
+from grace.cli.tui.clipboard import copy_to_clipboard
 from grace.cli.tui.commands import HOME_SHORTCUTS, SLASH_COMMANDS
 from grace.cli.tui.logo import choose_logo_for, compact_lines, wordmark
 from grace.cli.ui.theme import supports_unicode, symbols
@@ -432,7 +433,7 @@ class GraceTuiApp(App):
         return "\n".join([top, row, bottom])
 
     def _render_footer(self) -> str:
-        return f"[{DIM}]Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
+        return f"[{DIM}]Ctrl+C copy last answer · Ctrl+L clear · Tab focus · /exit to quit · /help commands[/]"
 
     # ---------------------------------------------------------------------
     # Overlays
@@ -627,8 +628,11 @@ class GraceTuiApp(App):
             return
 
 
-        if key == "ctrl+c" and self.runner.is_busy():
-            self.runner.cancel_task()
+        if key == "ctrl+c":
+            if self.runner.is_busy():
+                self.runner.cancel_task()
+            else:
+                self._copy_last_answer()
             handled()
             return
         if key == "ctrl+d" and not self.runner.is_busy():
@@ -734,6 +738,49 @@ class GraceTuiApp(App):
         if char and "ctrl" not in key and not key.startswith("ctrl"):
             store.insert(char)
             handled()
+
+    # ---------------------------------------------------------------------
+    # Paste handling
+    # ---------------------------------------------------------------------
+
+    def on_paste(self, event) -> None:
+        """Handle terminal paste (Ctrl+V / right-click paste)."""
+        store = self.store
+        text = getattr(event, "text", "") or ""
+        if not text:
+            return
+        # Ignore paste while overlays are active.
+        if store.permission or store.picker or store.login or store.help_open:
+            return
+        # Ignore paste while palette is open.
+        if store.palette:
+            return
+        for ch in text:
+            store.insert(ch)
+
+    # ---------------------------------------------------------------------
+    # Copy handling
+    # ---------------------------------------------------------------------
+
+    def _copy_last_answer(self) -> None:
+        """Copy the last answer/result from the activity feed to clipboard."""
+        store = self.store
+        # Walk backwards to find the most recent result block.
+        last_answer_lines: list[str] = []
+        for item in reversed(store.items):
+            if item["kind"] == "result":
+                last_answer_lines.insert(0, item["text"])
+            elif last_answer_lines:
+                # Stop once we hit a non-result after collecting results.
+                break
+        if not last_answer_lines:
+            store.push("info", "Nothing to copy yet.")
+            return
+        text = "\n".join(last_answer_lines)
+        if copy_to_clipboard(text):
+            store.push("info", f"Copied {len(text)} chars to clipboard.")
+        else:
+            store.push("info", "Copy failed — clipboard not available.")
 
     def _submit(self, text: str) -> None:
         trimmed = text.strip()
