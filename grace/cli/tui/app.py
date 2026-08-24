@@ -16,7 +16,7 @@ from textual.events import Key
 from textual.widgets import Static
 
 from grace.cli.free_plan import format_countdown, session_seconds_left
-from grace.cli.tui.clipboard import copy_to_clipboard
+from grace.cli.tui.clipboard import copy_to_clipboard, paste_from_clipboard
 from grace.cli.tui.commands import HOME_SHORTCUTS, SLASH_COMMANDS
 from grace.cli.tui.logo import choose_logo_for, compact_lines, wordmark
 from grace.cli.ui.theme import supports_unicode, symbols
@@ -635,6 +635,10 @@ class GraceTuiApp(App):
                 self._copy_last_answer()
             handled()
             return
+        if key == "ctrl+v":
+            self._paste_from_clipboard()
+            handled()
+            return
         if key == "ctrl+d" and not self.runner.is_busy():
             self.on_exit()
             handled()
@@ -761,6 +765,20 @@ class GraceTuiApp(App):
     # ---------------------------------------------------------------------
     # Copy handling
     # ---------------------------------------------------------------------
+
+    def _paste_from_clipboard(self) -> None:
+        """Paste text from the system clipboard into the input box."""
+        store = self.store
+        # Ignore paste while overlays are active.
+        if store.permission or store.picker or store.login or store.help_open:
+            return
+        if store.palette:
+            return
+        text = paste_from_clipboard()
+        if not text:
+            return
+        for ch in text:
+            store.insert(ch)
 
     def _copy_last_answer(self) -> None:
         """Copy the last answer/result from the activity feed to clipboard."""
