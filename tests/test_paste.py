@@ -7,8 +7,9 @@ from grace.cli.tui.clipboard import paste_from_clipboard
 class TestPasteFromClipboard:
     """Verify paste_from_clipboard reads from system clipboard."""
 
+    @patch("grace.cli.tui.clipboard.platform.system", return_value="Windows")
     @patch("grace.cli.tui.clipboard.subprocess.run")
-    def test_windows_paste(self, mock_run):
+    def test_windows_paste(self, mock_run, _platform):
         mock_run.return_value = MagicMock(returncode=0, stdout=b"hello world")
         result = paste_from_clipboard()
         assert result == "hello world"
@@ -16,14 +17,16 @@ class TestPasteFromClipboard:
         cmd = mock_run.call_args[0][0]
         assert "Get-Clipboard" in " ".join(cmd)
 
+    @patch("grace.cli.tui.clipboard.platform.system", return_value="Windows")
     @patch("grace.cli.tui.clipboard.subprocess.run")
-    def test_windows_paste_strips_newlines(self, mock_run):
+    def test_windows_paste_strips_newlines(self, mock_run, _platform):
         mock_run.return_value = MagicMock(returncode=0, stdout=b"hello\r\n")
         result = paste_from_clipboard()
         assert result == "hello"
 
+    @patch("grace.cli.tui.clipboard.platform.system", return_value="Windows")
     @patch("grace.cli.tui.clipboard.subprocess.run")
-    def test_windows_paste_failure(self, mock_run):
+    def test_windows_paste_failure(self, mock_run, _platform):
         mock_run.return_value = MagicMock(returncode=1, stdout=b"")
         result = paste_from_clipboard()
         assert result == ""
