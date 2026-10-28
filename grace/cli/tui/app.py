@@ -11,6 +11,8 @@ FINAL ANSWER stay visually distinct. No raw reasoning, tool JSON, or internal
 diagnostics are ever rendered.
 """
 
+import re
+
 from textual.app import App
 from textual.events import Key
 from textual.widgets import Static
@@ -19,7 +21,7 @@ from grace.cli.free_plan import format_countdown, session_seconds_left
 from grace.cli.tui.clipboard import copy_to_clipboard, paste_from_clipboard
 from grace.cli.tui.commands import HOME_SHORTCUTS, SLASH_COMMANDS
 from grace.cli.tui.logo import choose_logo_for, compact_lines, wordmark
-from grace.cli.ui.theme import supports_unicode, symbols
+from grace.cli.ui.theme import symbols, tui_supports_unicode
 from grace.providers.remote import RemoteProvider
 
 TICK_MS = 1.0
@@ -31,8 +33,8 @@ TICK_MS = 1.0
 ACCENT = "#22d3ee"     # cyan — Grace identity / in-progress activity
 SUCCESS = "#4ade80"    # green — completed activity
 ERROR = "#f87171"      # red — errors only
-DIM = "#71717a"        # zinc-500 — secondary metadata
-FAINT = "#33333a"      # near-black — rules & separators
+DIM = "#8b8b96"        # secondary metadata (5.8:1 on the background — WCAG AA)
+FAINT = "#52525b"      # rules & separators (2.5:1 — visible, still quiet)
 TEXT = "#d5d5d8"       # body text
 USER = "#ececf1"       # user prompts (near-white, bold)
 
@@ -42,6 +44,18 @@ SHORTCUT_ICONS = {"/paste": "▸", "/status": "◇", "/model": "◈", "/provider
 SHORTCUT_ICONS_ASCII = {"/paste": "?", "/status": "=", "/model": "*", "/provider": "#"}
 
 CHROME = 6  # header (2) + input box (3) + footer (1)
+
+# Rich style tags, ignoring an escaped literal bracket (``\[``).
+_MARKUP = re.compile(r"(?<!\\)\[/?[^\]]*\]")
+
+
+def _plain(text: str) -> str:
+    """The text Rich will actually draw: tags and ``\\[`` escapes removed."""
+    return _MARKUP.sub("", text).replace("\\[", "[")
+
+
+def _visible_len(text: str) -> int:
+    return len(_plain(text))
 
 
 def _fit(text: str, width: int) -> str:
@@ -60,9 +74,15 @@ def _esc(text: str) -> str:
     return text.replace("[", "\\[")
 
 
+def _sym() -> dict:
+    """Glyphs for the TUI. Textual renders Unicode natively, so these always
+    match its chrome; only an explicit ``ZEESH_ASCII=1`` downgrades them."""
+    return symbols(force_unicode=True)
+
+
 def _prompt_arrow() -> str:
-    """The user-prompt / input arrow degrades to ``>`` on legacy consoles."""
-    return "›" if supports_unicode() else ">"
+    """The user-prompt / input arrow degrades to ``>`` when ASCII is forced."""
+    return "›" if tui_supports_unicode() else ">"
 
 
 class GraceTuiApp(App):
@@ -140,7 +160,7 @@ class GraceTuiApp(App):
         store = self.store
         info = store.info
         columns = self.size.width if self.size else 80
-        sym = symbols()
+        sym = _sym()
 
         model = self._model_label(info)
         state = RemoteProvider.shared_session()
@@ -246,7 +266,7 @@ class GraceTuiApp(App):
         parts = []
         for i, c in enumerate(HOME_SHORTCUTS):
             active = i == selected
-            icon_table = SHORTCUT_ICONS if supports_unicode() else SHORTCUT_ICONS_ASCII
+            icon_table = SHORTCUT_ICONS if tui_supports_unicode() else SHORTCUT_ICONS_ASCII
             icon = f"{icon_table.get(c['name'], '·')} " if with_icons else ""
             desc = f"  {c['description']}" if with_descriptions else ""
             prefix = "› " if active else "  "
@@ -334,14 +354,14 @@ class GraceTuiApp(App):
         return "\n".join(out)
 
     def _status_line(self) -> str:
-        dot = "●" if supports_unicode() else "*"
+        dot = "●" if tui_supports_unicode() else "*"
         return f"[{ACCENT}]{dot}[/] [{DIM}]{_esc(self.store.working_status or 'Working')}[/]"
 
     def _render_item(self, item: dict, columns: int) -> list[str]:
         """One feed line (plus its separator when it is a user prompt)."""
         kind = item["kind"]
         text = _esc(item["text"])
-        sym = symbols()
+        sym = _sym()
         check, cross = _esc(sym["check"]), _esc(sym["cross"])
         if kind == "user":
             rule = sym["hLine"] * max(12, min(columns - 8, 56))
@@ -360,7 +380,7 @@ class GraceTuiApp(App):
         if kind == "file":
             return [f"[{SUCCESS}]+[/] [{TEXT}]{text}[/]"]
         if kind in ("info", "progress"):
-            return [f"[{DIM}]· {text}[/]"]
+            return [f"[{DIM}]{sym['bullet']} {text}[/]"]
         if kind == "console":
             return [f"[{DIM}]{text}[/]"]
         return [f"[{TEXT}]{text}[/]"]
@@ -368,7 +388,7 @@ class GraceTuiApp(App):
     def _render_answer_block(self, lines: list[str], columns: int) -> list[str]:
         """The final answer stands apart: a thin rule, then the block — never
         styled like another tool log."""
-        sym = symbols()
+        sym = _sym()
         width = max(16, min(columns - 8, 64))
         out = [f"[{DIM}]{sym['hLine'] * width}[/]"]
         for idx, line in enumerate(lines):
@@ -395,7 +415,7 @@ class GraceTuiApp(App):
     def _render_input(self) -> str:
         store = self.store
         columns = self.size.width if self.size else 80
-        sym = symbols()
+        sym = _sym()
         inner = max(8, columns - 6)
         prefix = _prompt_arrow() + " "
         visible = max(1, inner - len(prefix) - 2)
@@ -443,12 +463,20 @@ class GraceTuiApp(App):
     # ---------------------------------------------------------------------
 
     def _overlay_frame(self, title: str, inner_lines: list[str]) -> str:
-        sym = symbols()
+        """A closed dialog frame: every row carries both side borders and is
+        padded to the same visible width (markup tags are zero-width, so
+        padding them with ``len()`` left the right edge ragged)."""
+        sym = _sym()
         width = 62
+        inner_width = width - 4  # borders + one space each side
         out = [f"[{ACCENT}]{sym['cornerTl']}{sym['hLine'] * (width - 2)}{sym['cornerTr']}[/]"]
         out.append(f"[{ACCENT}]{sym['vLine']} {title.ljust(width - 3)}{sym['vLine']}[/]")
         for line in inner_lines:
-            out.append(f"[{ACCENT}]{sym['vLine']}[/] {line}")
+            if _visible_len(line) > inner_width:
+                # Truncate the plain text — slicing markup could cut a tag.
+                line = _plain(line)[: inner_width - 1] + "…"
+            pad = max(0, inner_width - _visible_len(line))
+            out.append(f"[{ACCENT}]{sym['vLine']}[/] {line}{' ' * pad} [{ACCENT}]{sym['vLine']}[/]")
         out.append(f"[{ACCENT}]{sym['cornerBl']}{sym['hLine'] * (width - 2)}{sym['cornerBr']}[/]")
         return "\n".join(out)
 
@@ -489,7 +517,7 @@ class GraceTuiApp(App):
     def _render_palette(self) -> str:
         store = self.store
         rows = store.palette_rows()
-        sym = symbols()
+        sym = _sym()
         width = 60
         lines = ["[dim grey]Commands[/]", ""]
         for i, c in enumerate(rows):
