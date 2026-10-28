@@ -8,7 +8,7 @@ There is deliberately NO input box: the terminal prompt itself is the input
 surface (`grace>`), so nothing in the UI draws a fake textbox.
 """
 
-from grace.cli.ui.theme import symbols, theme
+from grace.cli.ui.theme import strip_ansi, symbols, theme, visual_width
 
 
 def divider(width: int = 48) -> str:
@@ -44,6 +44,10 @@ def box_lines(lines: list[str], opts: dict | None = None) -> str:
         │            GRACE            │
         │  AI Coding Agent · v0.1.0   │
         └─────────────────────────────┘
+
+    Widths are measured on VISIBLE text — ANSI colour codes are zero-width, so
+    padding with ``len()`` pushed coloured content left and left the borders
+    ragged on every real terminal (the tests run with colour off and missed it).
     """
     opts = opts or {}
     sym = symbols()
@@ -51,8 +55,13 @@ def box_lines(lines: list[str], opts: dict | None = None) -> str:
     inner = width - 4  # space + content + space inside the border
     rows = []
     for line in lines:
-        visible = f"{line[:inner - 1]}{sym['ellipsis']}" if len(line) > inner else line
-        padded = visible.rjust((inner + len(visible)) // 2).ljust(inner)
+        if visual_width(line) > inner:
+            # Truncate the plain text: slicing coloured text could cut an escape
+            # sequence in half and leak raw codes to the terminal.
+            line = strip_ansi(line)[: max(0, inner - 1)] + sym["ellipsis"]
+        pad_total = max(0, inner - visual_width(line))
+        left = pad_total // 2
+        padded = " " * left + line + " " * (pad_total - left)
         rows.append(f"{sym['vLine']} {padded} {sym['vLine']}")
     return "\n".join([
         f"{sym['cornerTl']}{sym['hLine'] * (width - 2)}{sym['cornerTr']}",

@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 from grace.cli.tui.clipboard import paste_from_clipboard
 
-
 # ---------------------------------------------------------------------------
 # Subprocess clipboard reads
 # ---------------------------------------------------------------------------
@@ -648,8 +647,8 @@ class TestKeyboardBehavior:
     def test_paste_then_enter_submits(self):
         """Paste text then press Enter should submit the pasted text."""
         async def drive():
-            from grace.cli.tui.store import TuiStore
             from grace.cli.tui.app import GraceTuiApp
+            from grace.cli.tui.store import TuiStore
 
             info = {
                 "workspace": ".",
@@ -693,8 +692,8 @@ class TestKeyboardBehavior:
     def test_multiple_pastes_append(self):
         """Multiple paste events should concatenate."""
         async def drive():
-            from grace.cli.tui.store import TuiStore
             from grace.cli.tui.app import GraceTuiApp
+            from grace.cli.tui.store import TuiStore
 
             info = {
                 "workspace": ".",
@@ -706,7 +705,7 @@ class TestKeyboardBehavior:
             store = TuiStore(info)
             app = GraceTuiApp(store, MagicMock(), lambda: None)
 
-            async with app.run_test() as pilot:
+            async with app.run_test():
                 e1 = MagicMock()
                 e1.text = "first "
                 app.on_paste(e1)

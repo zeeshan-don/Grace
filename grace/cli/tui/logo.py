@@ -5,7 +5,7 @@ or "improved". The file's uniform indentation is removed and each row is kept
 exactly as drawn.
 """
 
-from grace.cli.ui.theme import supports_unicode
+from grace.cli.ui.theme import tui_supports_unicode
 
 # The GRACE logo exactly as drawn in GRACE_logo.txt (common indent removed).
 LOGO_ROWS = [
@@ -33,7 +33,7 @@ def _cell_width(text: str) -> int:
 
 
 def logo_lines() -> list[str]:
-    return list(LOGO_ROWS) if supports_unicode() else list(LOGO_ROWS_ASCII)
+    return list(LOGO_ROWS) if tui_supports_unicode() else list(LOGO_ROWS_ASCII)
 
 
 def logo_width() -> int:

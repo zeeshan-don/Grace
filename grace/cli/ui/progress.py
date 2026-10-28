@@ -23,6 +23,10 @@ from grace.cli.ui.theme import supports_ansi, symbols, theme, visual_width
 
 SPINNER_MS = 0.12
 MAX_LIVE_ROWS = 12
+# Placeholder the working line carries instead of a literal glyph; the renderer
+# swaps it for the current animation frame. Replacing a real glyph was unsafe —
+# the ASCII frames (| / - \) collide with ordinary text and with the bullet.
+SPIN_SLOT = "\x00"
 
 
 def _one_liner(text: str) -> str:
@@ -88,7 +92,7 @@ class ProgressRenderer:
             else:
                 self.paint()
         elif etype == "working":
-            self.set_current("  " + self.th["dim"](self.sym["bullet"] + " Grace is working" + self.sym["ellipsis"]))
+            self.set_current("  " + self.th["dim"](SPIN_SLOT + " Grace is working" + self.sym["ellipsis"]))
         elif etype == "status":
             # Status lines are internal activity — normal mode shows only the working line.
             if not self.verbose or _is_noise(evt.get("message") or ""):
@@ -108,7 +112,7 @@ class ProgressRenderer:
             # The primary agent (Grace) is covered by the 'working' line — only
             # specialist agents get their own start line, and only in debug mode.
             if evt.get("role") != "editor" and self.verbose:
-                self.set_current("  " + self.th["dim"](self.sym["bullet"] + " " + (evt.get("label") or "") + self.sym["ellipsis"]))
+                self.set_current("  " + self.th["dim"](SPIN_SLOT + " " + (evt.get("label") or "") + self.sym["ellipsis"]))
         elif etype == "agent-done":
             self.set_current(None)
             self.add_settled(f"  {self.sym['arrow']} {self._render_done(evt)}")
@@ -171,9 +175,14 @@ class ProgressRenderer:
             self._stop_spinner()
         if not self.live:
             if line:
-                self.print(f"{line}\n")
+                self.print(f"{self._resolve(line)}\n")
         else:
             self.paint()
+
+    def _resolve(self, line: str) -> str:
+        """Swap the spinner placeholder for the current animation frame."""
+        frames = self.sym["spinner"]
+        return line.replace(SPIN_SLOT, frames[self._frame % len(frames)])
 
     def flush_current(self) -> None:
         self.current = None
@@ -190,7 +199,7 @@ class ProgressRenderer:
         lines.extend(self.settled)
         if self.current:
             lines.append(self.current)
-        return lines
+        return [self._resolve(line) for line in lines]
 
     # -------------------------------------------------------------------------
     # Live TTY redraw + spinner
@@ -238,9 +247,6 @@ class ProgressRenderer:
             if not self.live:
                 return
             self._frame += 1
-            frames = self.sym["spinner"]
-            if self.current:
-                self.current = self.current.replace(frames[(self._frame - 1) % len(frames)], frames[self._frame % len(frames)])
             self.paint()
             if self.live:
                 self._spinner_timer = threading.Timer(SPINNER_MS, tick)
